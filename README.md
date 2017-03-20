@@ -1,0 +1,24 @@
+This is a parallel SESOP implementation in TensorFlow.
+
+To start working we need to setup our enviorment:
+-------------------------------------------------
+
+0. (Only the very first time) install profile in anaconda:
+conda create -n tensorflow
+
+1. First we need to activate tensorflow profile in anaconda:
+source activate tensorflow
+
+2. Open jupyther notebook
+
+3. if CG doesnt work (using scipy interface),
+edit file /home/shai/anaconda/lib/python2.7/site-packages/tensorflow/contrib/opt/python/training/external_optimizer.py
+
+
+Where stuff are?
+----------------
+/home/shai/anaconda/envs/tensorflow
+/home/shai/anaconda/lib/python2.7/site-packages/tensorflow
+/home/shai/anaconda/lib/python2.7/site-packages/tensorflow/include/tensorflow
+
+
