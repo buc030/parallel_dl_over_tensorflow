@@ -20,3 +20,6 @@ class SummaryManager:
 
     def merge_iters(self):
         return tf.summary.merge(self.iter_summaries)
+
+    def reset(self):
+        self.iter_summaries = []

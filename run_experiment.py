@@ -2,15 +2,21 @@
 
 
 from seboost import *
+import dataset_manager
+import experiment
+import experiments_manager
+import experiment_results
 import sys
 
-
+debug_list = []
 def fc_layer(input, n_in, n_out, log, hSize):
     with tf.name_scope('FC'):
         if log:
             W = HVar(tf.random_normal([n_in, n_out]), name='W')
             b = HVar(tf.zeros([n_out]), name='b')
             a = tf.matmul(input, W.out()) + b.out()
+
+            debug_list.append(W)
         else:
             W = tf.Variable(tf.random_normal([n_in, n_out]), name='W')
             b = tf.Variable(tf.zeros([n_out]), name='b')
@@ -46,41 +52,31 @@ def build_model(x, y, dim, log=False, hSize=0):
     
     return model_out #, loss, train_step
 
-def generate_random_data(dim, n=5000):
-    cov = np.random.rand(dim, dim)
-    cov = np.dot(cov, cov.transpose())
-
-    training_data = np.random.multivariate_normal(np.zeros(dim), cov, n)
-    testing_data = np.random.multivariate_normal(np.zeros(dim), cov, n)
-    
-    with tf.name_scope('generating_data'):
-        x = tf.placeholder(tf.float32, shape=[None, dim], name='x')
-        model_out = build_model(x, None, dim, False)
-
-        #with tf.Session('grpc://' + tf_server, config=config) as sess:
-        config = tf.ConfigProto()
-        config.allow_soft_placement = True
-        #config.gpu_options.allow_growth = True
-        with tf.Session(config=config) as sess:
-            sess.run(tf.global_variables_initializer())
-            training_labels = sess.run(model_out, feed_dict={x: training_data})
-            testing_labels = sess.run(model_out, feed_dict={x: testing_data})
-
-        return training_data, testing_data, training_labels, testing_labels
-
 
 
 #bs is batch size
 #sesop_freq is in (0,1) and is the fraction of sesop iterations.
 #i.e., if sesop_freq = 0.1 then we do 1 sesop iteration for each one sgd iteration
 #epochs is the number of epochs
-def _run_experiment(bs, sesop_freq, hSize, epochs, dim, file_writer_suffix):
+def _run_experiment(experiment, file_writer_suffix):
+    del debug_list[0:len(debug_list)]
+
+    #SV TODO: remove this hack!
+    tf.reset_default_graph()
+    SummaryManager.get().reset()
+    HVar.reset()
+    tf.set_random_seed(1)
+
+    bs = experiment.getFlagValue('b')
+    sesop_freq = experiment.getFlagValue('sesop_freq')
+    hSize = experiment.getFlagValue('hSize')
+    epochs = experiment.getFlagValue('epochs')
+    dim = experiment.getFlagValue('dim')
+    dataset_size = experiment.getFlagValue('dataset_size')
+    training_data, testing_data, training_labels, testing_labels = dataset_manager.DatasetManager().get_random_data(dim, dataset_size)
 
     print 'Running experiment with bs = ' + str(bs) + ', sesop_freq = ' + str(sesop_freq) + ', hSize = ' + str(hSize)
 
-    experiment = experiments_manager.ExperimentsManager.get().get_current_experiment()
-
-    training_data, testing_data, training_labels, testing_labels = generate_random_data(dim, 5000)
     config = tf.ConfigProto()
     #config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
@@ -110,7 +106,6 @@ def _run_experiment(bs, sesop_freq, hSize, epochs, dim, file_writer_suffix):
                     tf.train.batch([input, label], batch_size=bs, name='test_batcher')
                 return batched_input, batched_labels
 
-
             #It is very important to call create_training_dataset and create_testing_dataset 
             #create all queues (for train and test)
             train_batched_input, train_batched_labels = create_training_dataset(bs)
@@ -128,7 +123,7 @@ def _run_experiment(bs, sesop_freq, hSize, epochs, dim, file_writer_suffix):
 
         model_out, loss = build_model(batched_input, batched_labels, dim, True, hSize)
 
-        optimizer = SeboostOptimizer(loss, batched_input, batched_labels, sesop_freq, 5000, bs)
+        optimizer = SeboostOptimizer(loss, batched_input, batched_labels)
 
         #hold acc loss
         with tf.name_scope('loss_accamulator'):
@@ -138,6 +133,7 @@ def _run_experiment(bs, sesop_freq, hSize, epochs, dim, file_writer_suffix):
 
         iter_summaries = SummaryManager.get().merge_iters()
         optimizer.iter_summaries = iter_summaries
+
 
         sess.run(tf.global_variables_initializer())
         sess.run(tf.local_variables_initializer())
@@ -150,8 +146,14 @@ def _run_experiment(bs, sesop_freq, hSize, epochs, dim, file_writer_suffix):
         #we must start queue_runners
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(sess=sess, coord=coord)
-        sys.stdout.flush()
 
+        """
+        print 'batched_input, batched_labels = ' + str(np.mean(sess.run([batched_input, batched_labels], feed_dict={is_training: True, is_full_batch: True})[0]))
+
+        print 'Start total_loss = ' + str(sess.run(loss, feed_dict={is_training: True, is_full_batch: True}))
+        for i in range(len(debug_list)):
+            print 'W[' + str(i) + '] = ' + str(debug_list[i].out().eval())
+        """
         #Progress bar:
         for epoch in range(epochs):
             #run 20 steps (full batch optimization to start with)
@@ -177,24 +179,15 @@ def _run_experiment(bs, sesop_freq, hSize, epochs, dim, file_writer_suffix):
         coord.request_stop()
         coord.join(threads)
 
-import experiment
-import experiments_manager
-import experiment_results
+
 
 def run_experiment(experiment, file_writer_suffix, force_rerun = False):
-
     if force_rerun == False and experiments_manager.ExperimentsManager.get().load_experiment(experiment) is not None:
         print 'Experiment already ran!'
         return experiments_manager.ExperimentsManager.get().load_experiment(experiment)
 
-    bs = experiment.getFlagValue('b')
-    sesop_freq = experiment.getFlagValue('sesop_freq')
-    hSize = experiment.getFlagValue('hSize')
-    epochs = experiment.getFlagValue('epochs')
-    dim = experiment.getFlagValue('dim')
-
     experiments_manager.ExperimentsManager.get().set_current_experiment(experiment)
-    _run_experiment(bs, sesop_freq, hSize, epochs, dim, file_writer_suffix)
+    _run_experiment(experiment, file_writer_suffix)
 
     #make experiment presistant
     experiments_manager.ExperimentsManager.get().dump_experiment(experiment)
@@ -203,19 +196,21 @@ def run_experiment(experiment, file_writer_suffix, force_rerun = False):
 experiments = {}
 i = 0
 
-for lr in [1, 0.1, 0.01, 0.001]:
+
+for lr in [float(1)/2**i for i in range(10)]:
     experiments[i] = experiment.Experiment(
         {'b': 100,
          'sesop_freq': float(1) / 100,
          'hSize': 0,
          'epochs': 10,
          'dim': 10,
-         'lr': lr
+         'lr': lr,
+         'dataset_size': 5000
          })
     i += 1
 
 for e in experiments.values():
-    run_experiment(e, file_writer_suffix='1', force_rerun=False)
+    run_experiment(e, file_writer_suffix='1', force_rerun=True)
 
 comperator = experiment_results.ExperimentComperator(experiments)
 
@@ -223,9 +218,9 @@ comperator = experiment_results.ExperimentComperator(experiments)
 
 
 import matplotlib.pyplot as plt
-plt.figure()
 
 comperator.compare(group_by='b')
+
 """
 for e in experiments.values():
     e.results.plotTrainError()

@@ -17,11 +17,19 @@ class HVar:
     #this contains all alphas in the graph
     all_hvars = {}
 
+    @classmethod
+    def reset(cls):
+        HVar.all_hvars = {}
+
     def __init__(self, initial_value=None, trainable=True, collections=None, validate_shape=True, caching_device=None, name=None, variable_def=None, dtype=None, expected_shape=None, import_scope=None):
         var = tf.Variable(initial_value, trainable, collections, validate_shape, caching_device, name, variable_def, dtype, expected_shape, import_scope)
+
         self.sub_init(var)
 
-    def sub_init(self, var, hSize = 2):
+    def sub_init(self, var):
+        experiment = experiments_manager.ExperimentsManager.get().get_current_experiment()
+        hSize = experiment.getFlagValue('hSize')
+
         self.name = var.name.split(":")[0].split("/")[-1]
 
         with tf.name_scope(self.name + '_history'):
@@ -133,7 +141,7 @@ class SeboostOptimizer:
     #batched_input, batched_labels are tensors that prodece batches
     #is_training is a tensor that will be true while training and false while testing
     #we run CG once in sesop_freq iterations
-    def __init__(self, loss, batched_input, batched_labels, sesop_freq, dataset_size, batch_size):
+    def __init__(self, loss, batched_input, batched_labels):
 
 
         self.loss = loss
@@ -142,10 +150,15 @@ class SeboostOptimizer:
         self.avg_gain_from_cg = 0.0
         self.iter_summaries = SummaryManager.get().merge_iters()
 
-        self.sesop_freq = sesop_freq
-        self.sgd_steps = int(1 / sesop_freq)
-        self.dataset_size = dataset_size
-        self.iters_per_epoch = dataset_size / batch_size
+        self.experiment = experiments_manager.ExperimentsManager.get().get_current_experiment()
+        lr = self.experiment.getFlagValue('lr')
+        self.sesop_freq = self.experiment.getFlagValue('sesop_freq')
+
+        self.sgd_steps = int(1 / self.sesop_freq)
+        self.dataset_size = self.experiment.getFlagValue('dataset_size')
+        self.iters_per_epoch = self.dataset_size / self.experiment.getFlagValue('b')
+
+
         # sesop_offset_in_epoch is the number of sgd iterations we need to do before we run sesop
         # (counting from the begining of an epoch)
         self.sesop_offset_in_epoch = self.sgd_steps % self.iters_per_epoch
@@ -153,9 +166,9 @@ class SeboostOptimizer:
         self.num_of_sesops_in_epoch = self.iters_per_epoch/self.sgd_steps
         self.epochs_ran_so_far = 0
         self.sesop_runs = 0
-        self.experiment = experiments_manager.ExperimentsManager.get().get_current_experiment()
 
-        lr = self.experiment.getFlagValue('lr')
+
+
         self.sgd_ran_times_tf = tf.Variable(0, dtype=tf.int32)
         self.train_step = tf.train.GradientDescentOptimizer(learning_rate=lr).minimize(loss, name='minimizer', \
                 var_list=HVar.all_trainable_weights(), global_step=self.sgd_ran_times_tf)
