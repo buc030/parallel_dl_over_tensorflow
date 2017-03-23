@@ -21,15 +21,21 @@ class ExperimentsManager:
                 if exc.errno != os.errno.EEXIST:
                     raise
 
-        try:
-            with open(ExperimentsManager.METADATA_FILE, 'rb') as f:
-                self.metadata = pickle.load(f)
-        except:
-            print ExperimentsManager.METADATA_FILE + ' does not exist yet, programmer should uncomment the line that creates it'
-            self.metadata = {}
-            self.dunp_metadata()
+        self.metadata = {}
+        self.refresh_metadata()
 
     #private
+
+    #in case another process added experiments and took away free indexes!
+    def refresh_metadata(self):
+        try:
+            with open(ExperimentsManager.METADATA_FILE, 'rb') as f:
+                self.metadata.update(pickle.load(f))
+        except:
+            print ExperimentsManager.METADATA_FILE + ' does not exist yet, programmer should uncomment the line that creates it'
+            self.dunp_metadata()
+
+
     def dunp_metadata(self):
         with open(ExperimentsManager.METADATA_FILE, 'wb') as f:
             pickle.dump(self.metadata, f)

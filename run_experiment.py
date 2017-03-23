@@ -196,21 +196,22 @@ def run_experiment(experiment, file_writer_suffix, force_rerun = False):
 experiments = {}
 i = 0
 
-
-for lr in [float(1)/2**i for i in range(10)]:
-    experiments[i] = experiment.Experiment(
-        {'b': 100,
-         'sesop_freq': float(1) / 100,
-         'hSize': 0,
-         'epochs': 10,
-         'dim': 10,
-         'lr': lr,
-         'dataset_size': 5000
-         })
-    i += 1
+for sesop_freq in [0.001, 0.01, 0.1, 0.5, 0.9, 0.99]:
+    for h in [0, 1, 2, 4, 8, 16, 32]:
+        for lr in [float(1)/2**i for i in range(10)]:
+            experiments[i] = experiment.Experiment(
+                {'b': 100,
+                 'sesop_freq': sesop_freq,
+                 'hSize': h,
+                 'epochs': 100, #saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
+                 'dim': 10,
+                 'lr': lr,
+                 'dataset_size': 5000
+                 })
+            i += 1
 
 for e in experiments.values():
-    run_experiment(e, file_writer_suffix='1', force_rerun=True)
+    run_experiment(e, file_writer_suffix='1', force_rerun=False)
 
 comperator = experiment_results.ExperimentComperator(experiments)
 
