@@ -9,7 +9,8 @@ class Experiment:
         'hSize': 0,
         'epochs': 200,
         'dim': 10,
-        'lr': 0.1
+        'lr': 0.1,
+        'dataset_size': 5000
         }
 
 

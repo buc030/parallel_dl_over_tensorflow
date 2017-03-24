@@ -29,7 +29,7 @@ class HVar:
     def sub_init(self, var):
         experiment = experiments_manager.ExperimentsManager.get().get_current_experiment()
         hSize = experiment.getFlagValue('hSize')
-
+        
         self.name = var.name.split(":")[0].split("/")[-1]
 
         with tf.name_scope(self.name + '_history'):

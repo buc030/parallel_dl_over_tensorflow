@@ -198,7 +198,7 @@ i = 0
 
 for sesop_freq in [0.001, 0.01, 0.1, 0.5, 0.9, 0.99]:
     for h in [0, 1, 2, 4, 8, 16, 32]:
-        for lr in [float(1)/2**i for i in range(10)]:
+        for lr in [float(1)/2**j for j in range(10)]:
             experiments[i] = experiment.Experiment(
                 {'b': 100,
                  'sesop_freq': sesop_freq,
@@ -210,6 +210,7 @@ for sesop_freq in [0.001, 0.01, 0.1, 0.5, 0.9, 0.99]:
                  })
             i += 1
 
+#print 'experiments = ' + str(experiments.keys())
 for e in experiments.values():
     run_experiment(e, file_writer_suffix='1', force_rerun=False)
 
