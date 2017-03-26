@@ -8,6 +8,7 @@ import os
 class ExperimentsManager:
     BASE_PATH = '/tmp/generated_data/ExperimentsManager/'
     METADATA_FILE = BASE_PATH + 'metadata'
+    TENSOR_BOARD_DIRS = BASE_PATH + 'TensorBoard/'
     inst = None
 
     def __init__(self):
@@ -67,6 +68,10 @@ class ExperimentsManager:
         if ExperimentsManager.inst is None:
             ExperimentsManager.inst = ExperimentsManager()
         return ExperimentsManager.inst
+
+    def get_experiment_tensorboard_dir(self, experiment):
+        self.dump_experiment(experiment)
+        return ExperimentsManager.TENSOR_BOARD_DIRS + str(self.metadata[experiment])
 
     def set_current_experiment(self, experiment):
         self.curr_experiment = experiment

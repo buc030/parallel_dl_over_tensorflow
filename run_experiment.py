@@ -9,48 +9,46 @@ import experiment_results
 import sys
 
 debug_list = []
-def fc_layer(input, n_in, n_out, log, hSize):
+def fc_layer(input, n_in, n_out):
     with tf.name_scope('FC'):
-        if log:
-            W = HVar(tf.random_normal([n_in, n_out]), name='W')
-            b = HVar(tf.zeros([n_out]), name='b')
-            a = tf.matmul(input, W.out()) + b.out()
+            #W = HVar(tf.random_normal([n_in, n_out]), name='W')
+            #b = HVar(tf.zeros([n_out]), name='b')
 
-            debug_list.append(W)
-        else:
-            W = tf.Variable(tf.random_normal([n_in, n_out]), name='W')
-            b = tf.Variable(tf.zeros([n_out]), name='b')
-            a = tf.matmul(input, W) + b
+        W = HVar(tf.Variable(tf.random_normal([n_in, n_out]), name='W'))
+        b = HVar(tf.Variable(tf.zeros([n_out]), name='b'))
+        a = tf.matmul(input, W.out()) + b.out()
+
+        debug_list.append(W)
 
         out = tf.nn.tanh(a)
-        
-        if log:
-            SummaryManager.get().add_iter_summary(tf.summary.histogram('activations_before_tanh', a))
-            SummaryManager.get().add_iter_summary(tf.summary.histogram('activations_after_tanh', out))
-        
+
+        SummaryManager.get().add_iter_summary(tf.summary.histogram('activations_before_tanh', a))
+        SummaryManager.get().add_iter_summary(tf.summary.histogram('activations_after_tanh', out))
+
         return out
 
 
-def build_model(x, y, dim, log=False, hSize=0):
-    layers = [fc_layer(x, dim, dim, log, hSize)]
-    for i in range(1):
-        layers.append(fc_layer(layers[-1], dim, dim, log, hSize))
-    layers.append(fc_layer(layers[-1], dim, 1, log, hSize))
+def build_model(x, y, dim):
+    experiment = experiments_manager.ExperimentsManager.get().get_current_experiment()
+    hidden_layers_num = experiment.getFlagValue('hidden_layers_num')
+    hidden_layers_size = experiment.getFlagValue('hidden_layers_size')
+
+    layers = [fc_layer(x, dim, hidden_layers_size)]
+    for i in range(hidden_layers_num):
+        layers.append(fc_layer(layers[-1], hidden_layers_size, hidden_layers_size))
+    layers.append(fc_layer(layers[-1], hidden_layers_size, 1))
 
     model_out = layers[-1]
 
 
-    
     #when log is true we build a model for training!
-    if log:
-        loss_per_sample = tf.squared_difference(model_out, y, name='loss_per_sample')
-        loss = tf.reduce_mean(loss_per_sample, name='loss')
-        SummaryManager.get().add_iter_summary(tf.summary.scalar('loss', loss))
 
-        return model_out, loss
-    #tf.summary.scalar('loss', loss)
-    
-    return model_out #, loss, train_step
+    loss_per_sample = tf.squared_difference(model_out, y, name='loss_per_sample')
+    loss = tf.reduce_mean(loss_per_sample, name='loss')
+    SummaryManager.get().add_iter_summary(tf.summary.scalar('loss', loss))
+
+    return model_out, loss
+
 
 
 
@@ -121,7 +119,7 @@ def _run_experiment(experiment, file_writer_suffix):
             #    lambda: [test_batched_input, test_batched_labels])
 
 
-        model_out, loss = build_model(batched_input, batched_labels, dim, True, hSize)
+        model_out, loss = build_model(batched_input, batched_labels, dim)
 
         optimizer = SeboostOptimizer(loss, batched_input, batched_labels)
 
@@ -181,12 +179,15 @@ def _run_experiment(experiment, file_writer_suffix):
 
 
 
-def run_experiment(experiment, file_writer_suffix, force_rerun = False):
+def run_experiment(experiment, force_rerun = False):
+
     if force_rerun == False and experiments_manager.ExperimentsManager.get().load_experiment(experiment) is not None:
         print 'Experiment already ran!'
         return experiments_manager.ExperimentsManager.get().load_experiment(experiment)
 
     experiments_manager.ExperimentsManager.get().set_current_experiment(experiment)
+
+    file_writer_suffix = experiments_manager.ExperimentsManager.get().get_experiment_tensorboard_dir(e)
     _run_experiment(experiment, file_writer_suffix)
 
     #make experiment presistant
@@ -196,42 +197,86 @@ def run_experiment(experiment, file_writer_suffix, force_rerun = False):
 experiments = {}
 i = 0
 
-for sesop_freq in [0.001, 0.01, 0.1, 0.5, 0.9, 0.99]:
+
+for sesop_freq in [0.01, 0.1]:
     for h in [0, 1, 2, 4, 8, 16, 32]:
-        for lr in [float(1)/2**j for j in range(10)]:
+        for lr in [float(1)/2**j for j in range(4, 10)]:
+        #for lr in [1.0/32, 1.0/64, 1.0/128]:
             experiments[i] = experiment.Experiment(
                 {'b': 100,
                  'sesop_freq': sesop_freq,
                  'hSize': h,
-                 'epochs': 100, #saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
+                 'epochs': 20, #saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
                  'dim': 10,
                  'lr': lr,
-                 'dataset_size': 5000
+                 'dataset_size': 5000,
+                 'model': 'simple',
+                 'hidden_layers_num': 3,
+                 'hidden_layers_size': 10
                  })
+            print str(experiments[i].results.testError)
             i += 1
 
 #print 'experiments = ' + str(experiments.keys())
 for e in experiments.values():
-    run_experiment(e, file_writer_suffix='1', force_rerun=False)
+    run_experiment(e, force_rerun=True)
 
 comperator = experiment_results.ExperimentComperator(experiments)
 
 #save the experiment results:
 
-
 import matplotlib.pyplot as plt
 
-comperator.compare(group_by='b')
+#comperator.compare(group_by='lr', error_type='train', filter=lambda expr: expr.getFlagValue('sesop_freq') <= 0.1 and expr.results.getBestTrainError() < 0.2)
+#plt.show()
 
-"""
-for e in experiments.values():
-    e.results.plotTrainError()
-    e.results.plotTestError()
-    print e.results.testError
-"""
+
+best_with_sesop = comperator.getBestTrainError(filter=lambda expr: expr.getFlagValue('sesop_freq') > 0)
+#best_without_sesop = comperator.getBestTrainError(filter=lambda expr: expr.getFlagValue('sesop_freq') > 0)
+best_without_sesop = comperator.getBestTrainError(filter=lambda expr: expr.getFlagValue('hSize') == 0)
+
+print '------------------------'
+print 'best_with_sesop = ' + str(best_with_sesop) + ', error = ' + str(best_with_sesop.results.getBestTrainError())
+print 'best_without_sesop = ' + str(best_without_sesop) + ', error = ' + str(best_without_sesop.results.getBestTrainError())
+
+comperator = experiment_results.ExperimentComperator({0: best_with_sesop, 1: best_without_sesop})
+comperator.set_y_logscale(True)
+
+print '------------------------'
+
+comperator.compare(group_by='b', error_type='train')
+
+
 plt.show()
 
 
 
-
+"""
 ########################################################
+
+Experiment:
+                 'b': 100,
+                 'sesop_freq': sesop_freq,
+                 'hSize': h,
+                 'epochs': 100, #saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
+                 'dim': 10,
+                 'lr': lr,
+                 'dataset_size': 5000,
+                 'model': 'simple',
+                 'hidden_layers_num': 1,
+                 'hidden_layers_size': 10
+
+We got best with sesop:
+b_100/dataset_size_5000/dim_10/epochs_100/hSize_16/hidden_layers_num_1/hidden_layers_size_10/lr_0.25/model_simple/sesop_freq_0.5/, error = 0.0833115
+b_100/dataset_size_5000/dim_10/epochs_100/hSize_4/hidden_layers_num_1/hidden_layers_size_10/lr_0.125/model_simple/sesop_freq_0.1/, error = 0.135486
+b_100/dataset_size_5000/dim_10/epochs_100/hSize_0/hidden_layers_num_1/hidden_layers_size_10/lr_0.015625/model_simple/sesop_freq_0.01/, error = 0.200911
+b_100/dataset_size_5000/dim_10/epochs_100/hSize_0/hidden_layers_num_1/hidden_layers_size_10/lr_0.015625/model_simple/sesop_freq_0.001/, error = 0.200882
+
+We got best without sesop:
+b_100/dataset_size_5000/dim_10/epochs_100/hSize_0/hidden_layers_num_1/hidden_layers_size_10/lr_0.015625/model_simple/sesop_freq_0.001/, error = 0.200882
+
+So in this case, Sesop allows us to use much higher learning rates
+###########################################################################################################
+
+
+"""

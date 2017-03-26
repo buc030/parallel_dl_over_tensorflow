@@ -19,49 +19,78 @@ class HVar:
 
     @classmethod
     def reset(cls):
-        HVar.all_hvars = {}
+        HVar.all_hvars[current_thread()] = []
 
-    def __init__(self, initial_value=None, trainable=True, collections=None, validate_shape=True, caching_device=None, name=None, variable_def=None, dtype=None, expected_shape=None, import_scope=None):
-        var = tf.Variable(initial_value, trainable, collections, validate_shape, caching_device, name, variable_def, dtype, expected_shape, import_scope)
+    #problem is when someone is doing get_variable, he expect to reuse the same variable
+    #So we should pass this class a ready variable
+    #def __init__(self, initial_value=None, trainable=True, collections=None, validate_shape=True, caching_device=None, name=None, variable_def=None, dtype=None, expected_shape=None, import_scope=None):
+    #    var = tf.Variable(initial_value, trainable, collections, validate_shape, caching_device, name, variable_def, dtype, expected_shape, import_scope)
 
-        self.sub_init(var)
+    def __init__(self, var):
+        #self.name = var.name.split(":")[0].split("/")[-1]
+        self.name = var.name.split(":")[0]
+        self.var = var
+        with tf.variable_scope(self.name):
+            self.sub_init(var)
 
     def sub_init(self, var):
         experiment = experiments_manager.ExperimentsManager.get().get_current_experiment()
-        hSize = experiment.getFlagValue('hSize')
-        
-        self.name = var.name.split(":")[0].split("/")[-1]
+        self.hSize = experiment.getFlagValue('hSize')
+        self.nodes = 1 #experiment.getFlagValue('nodes')
+        self.node_id = 0 #experiment.getFlagValue('node_id')
 
-        with tf.name_scope(self.name + '_history'):
-            self.var = var
-            self.replicas = [] #this taks 2X memory
-            self.aplha = []
-            self.last_snapshot = tf.Variable(var.initialized_value(), name='snapshot') #this makes it 3X + hSize
-            self.next_idx = 0
-            self.op_cache = {}
-            self.o = None
+        self.var = var
 
+        self.history = []
+        self.history_aplha = []
+
+        self.replicas = []
+        self.replicas_aplha = []
+
+        self.next_idx = 0
+        self.op_cache = {}
+        self.o = None
+
+
+
+        with tf.name_scope(self.name + '_subspace'):
+            # snapshot is taken after each sesop. after a sesop, the snapshot will contain the value after sesop ran.
+            # we need this variable to be shared so we will be able to push the "after sesop value" back into the workers.
+            self.last_snapshot = tf.get_variable(initializer=var.initialized_value(), name='snapshot')
+
+            #node 0 also holds 'nodes - 1' variables. 1 for each other node:
+            #the last n-1 replicas are "nodes" replicas.
             with tf.name_scope('replicas'):
-                for i in range(hSize):
-                    self.replicas.append(tf.Variable(np.zeros(var.get_shape()),\
-                        dtype=var.dtype.base_dtype, name='replica'))
+                for i in range(self.nodes - 1):
+                    #Note we use tf.getVariable, so thes variables are shared between all nodes.
+                    self.replicas.append(tf.get_variable(initializer=np.zeros(var.get_shape()), \
+                                                        dtype=var.dtype.base_dtype, name='replica_' + str(i)))
 
-            with tf.name_scope('alphas'):
-                for i in range(hSize):
-                    self.aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha'))
-                    SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas', self.aplha[-1]))
+            if self.node_id == 0:
+                with tf.name_scope('history'):
+                    for i in range(self.hSize):
+                        self.history.append(tf.Variable(np.zeros(var.get_shape()),\
+                            dtype=var.dtype.base_dtype, name='h_' + str(i)))
+
+                with tf.name_scope('history_alpha'):
+                    for i in range(self.hSize):
+                        self.history_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_h_' + str(i)))
+                        SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_h', self.history_aplha[-1]))
+
+                with tf.name_scope('replicas_aplha'):
+                    for i in range(self.nodes - 1):
+                        self.replicas_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_n_' + str(i)))
+                        SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_n', self.replicas_aplha[-1]))
 
 
+        for i in range(self.hSize):
+            self.push_history_op() #make sure all ops are created
 
-            for i in range(hSize):
-                self.push_history_op() #make sure all ops are created
+        if current_thread() not in HVar.all_hvars:
+            HVar.all_hvars[current_thread()] = []
 
-            if current_thread() not in HVar.all_hvars:
-                HVar.all_hvars[current_thread()] = []
-
-            HVar.all_hvars[current_thread()].append(self)
-            assert(self.next_idx == 0)
-
+        HVar.all_hvars[current_thread()].append(self)
+        assert(self.next_idx == 0)
 
     def out(self):
         if self.o is not None:
@@ -71,12 +100,29 @@ class HVar:
             #return an affine combination of the history vectors
             #and a dictonary to add to feed_dict.
             self.o = self.var
-            for r, a in zip(self.replicas, self.aplha):
-                self.o += r*a
+
+            if self.node_id == 0:
+                for r, a in zip(self.history, self.history_aplha):
+                    self.o += r * a
+
+                for r, a in zip(self.replicas, self.replicas_aplha):
+                    self.o += r*a
 
             return self.o
 
-    #returns an op that updates history and snapshot (executed after optimization on alpha)
+    # create an op that puts var of this node into its replica
+    #Called before sesop!
+    def push_to_master_op(self):
+        assert (self.node_id != 0)
+        return tf.assign(self.replicas[self.node_id - 1], self.out())
+
+    # this must be called after sesop was executed!
+    #Called after sesop!
+    def pull_from_master_op(self):
+        assert (self.node_id != 0)
+        return tf.assign(self.var, self.last_snapshot)
+
+    # returns an op that updates history and snapshot (executed after optimization on alpha)
     #This must be called when alpahs are non zeros!!!
     def push_history_op(self):
         if self.next_idx not in self.op_cache:
@@ -88,7 +134,7 @@ class HVar:
                 update_var_op = tf.assign(self.var, self.out())
                 with tf.control_dependencies([update_var_op]):
                     #now we update the history (self.var contain the sesop result):
-                    update_history_op = tf.assign(self.replicas[self.next_idx], self.var - self.last_snapshot)
+                    update_history_op = tf.assign(self.history[self.next_idx], self.var - self.last_snapshot)
                     with tf.control_dependencies([update_history_op]):
                         #now we update the last_snapshot to be the sesop result
                         update_snapshot_op = tf.assign(self.last_snapshot, self.var)
@@ -100,22 +146,25 @@ class HVar:
                                 tf.group(update_history_op, update_var_op, update_snapshot_op, reset_alpha_op)
 
         old_idx = self.next_idx
-        self.next_idx = (self.next_idx + 1)%len(self.replicas)
+        self.next_idx = (self.next_idx + 1)%self.hSize
 
         return self.op_cache[old_idx]
 
     def zero_alpha_op(self):
         group_op = tf.no_op()
-        for a in self.aplha:
+        for a in self.replicas_aplha + self.history_aplha:
             group_op = tf.group(group_op, tf.assign(a, np.zeros(1)))
         return group_op
+
+
+
 
     #the alphas from sesop (the coefitients that choose the history vector)
     @classmethod
     def all_trainable_alphas(self):
         alphas = []
         for hvar in HVar.all_hvars[current_thread()]:
-            alphas.extend(hvar.aplha)
+            alphas.extend(hvar.replicas_aplha + hvar.history_aplha)
         return alphas
 
     #all the regular weights to be trained
@@ -143,7 +192,7 @@ class SeboostOptimizer:
     #we run CG once in sesop_freq iterations
     def __init__(self, loss, batched_input, batched_labels):
 
-
+        self.break_chains = True
         self.loss = loss
         self.iteration_ran = 0
         self.sesop_iteration_ran = 0
@@ -173,15 +222,26 @@ class SeboostOptimizer:
         self.train_step = tf.train.GradientDescentOptimizer(learning_rate=lr).minimize(loss, name='minimizer', \
                 var_list=HVar.all_trainable_weights(), global_step=self.sgd_ran_times_tf)
 
+        if self.break_chains == False:
+            with tf.name_scope('sesop_offset_train_steps'):
+                self.sesop_offset_train_steps = chain_training_step(lambda: tf.train.GradientDescentOptimizer(learning_rate=lr).minimize(loss,\
+                name='minimizer', var_list=HVar.all_trainable_weights(), global_step=self.sgd_ran_times_tf), self.sesop_offset_in_epoch)
 
-        with tf.name_scope('sesop_offset_train_steps'):
-            self.sesop_offset_train_steps = chain_training_step(lambda: tf.train.GradientDescentOptimizer(learning_rate=lr).minimize(loss,\
-            name='minimizer', var_list=HVar.all_trainable_weights(), global_step=self.sgd_ran_times_tf), self.sesop_offset_in_epoch)
+            with tf.name_scope('epoch_train_steps'):
+                self.epoch_train_steps = chain_training_step(lambda: tf.train.GradientDescentOptimizer(learning_rate=lr).minimize(loss,\
+                name='minimizer', var_list=HVar.all_trainable_weights(), global_step=self.sgd_ran_times_tf), self.iters_per_epoch)
 
-        with tf.name_scope('epoch_train_steps'):
-            self.epoch_train_steps = chain_training_step(lambda: tf.train.GradientDescentOptimizer(learning_rate=lr).minimize(loss,\
-            name='minimizer', var_list=HVar.all_trainable_weights(), global_step=self.sgd_ran_times_tf), self.iters_per_epoch)
+        with tf.name_scope('10_train_steps'):
+            self.ten_train_steps = chain_training_step(lambda: tf.train.GradientDescentOptimizer(learning_rate=lr).minimize(loss,\
+            name='minimizer', var_list=HVar.all_trainable_weights(), global_step=self.sgd_ran_times_tf), 10)
 
+        with tf.name_scope('epoch_mod_10_train_steps'):
+            self.epoch_mod_10_train_steps = chain_training_step(lambda: tf.train.GradientDescentOptimizer(learning_rate=lr).minimize(loss,\
+            name='minimizer', var_list=HVar.all_trainable_weights(), global_step=self.sgd_ran_times_tf), self.iters_per_epoch%10)
+
+        with tf.name_scope('sesop_offset_mod_10_train_steps'):
+            self.sesop_offset_mod_10_train_steps = chain_training_step(lambda: tf.train.GradientDescentOptimizer(learning_rate=lr).minimize(loss,\
+            name='minimizer', var_list=HVar.all_trainable_weights(), global_step=self.sgd_ran_times_tf), self.sesop_offset_in_epoch%10)
 
 
         self.cg_var_list = HVar.all_trainable_alphas()
@@ -214,13 +274,34 @@ class SeboostOptimizer:
         self.sesop_runs += 1
         return sess.run(self.loss, feed_dict=sesop_feed_dict)
 
+    def run_epoch_sgd_steps(self, sess, _feed_dict):
+        if self.break_chains:
+            for i in range(self.iters_per_epoch/10):
+                _, loss = sess.run([self.ten_train_steps, self.loss], feed_dict=_feed_dict)
+            _, loss = sess.run([self.epoch_mod_10_train_steps, self.loss], feed_dict=_feed_dict)
+            return loss
+
+        _, loss = sess.run([self.epoch_train_steps, self.loss], feed_dict=_feed_dict)
+        return loss
+
+
+    def run_sesop_offset_sgd_steps(self, sess, _feed_dict):
+        if self.break_chains:
+            for i in range(self.sesop_offset_in_epoch/10):
+                _, loss = sess.run([self.ten_train_steps, self.loss], feed_dict=_feed_dict)
+            _, loss = sess.run([self.sesop_offset_mod_10_train_steps, self.loss], feed_dict=_feed_dict)
+            return loss
+
+
+        _, loss = sess.run([self.sesop_offset_train_steps, self.loss], feed_dict=_feed_dict)
+        return loss
 
     def run_epoch(self, sess, _feed_dict):
         #we have 2 full epochs without sesop
         #Then in the begining of the first
         #should we run a full epoch without sesop?
         if self.experiment.getFlagValue('hSize') == 0 or self.epochs_ran_so_far < self.num_of_epoch_without_sesop:
-            _, loss = sess.run([self.epoch_train_steps, self.loss], feed_dict=_feed_dict)
+            loss = self.run_epoch_sgd_steps(sess, _feed_dict)
             total_count_sgd_steps = sess.run(self.sgd_ran_times_tf)
             print 'Ran = ' + str(total_count_sgd_steps) + ' sgd steps'
             #print 'loss = ' + str(loss)
@@ -242,7 +323,7 @@ class SeboostOptimizer:
 
         for i in range(self.num_of_sesops_in_epoch):
             #now run the rest of the steps
-            _, loss = sess.run([self.sesop_offset_train_steps, self.loss], feed_dict=_feed_dict)
+            loss = self.run_sesop_offset_sgd_steps(sess, _feed_dict)
             #now run sesop
             loss = self.run_sesop(sess, _feed_dict)
 

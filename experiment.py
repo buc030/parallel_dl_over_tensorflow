@@ -10,7 +10,10 @@ class Experiment:
         'epochs': 200,
         'dim': 10,
         'lr': 0.1,
-        'dataset_size': 5000
+        'dataset_size': 5000,
+        'model': 'simple',
+        'hidden_layers_num': 1,
+        'hidden_layers_size': 10
         }
 
 

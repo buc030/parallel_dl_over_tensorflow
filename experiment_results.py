@@ -38,6 +38,12 @@ class ExperimentResults:
             res += '/' + flag_name + '=' + str(self.getFlagValue(flag_name))
         return res
 
+    def getBestTrainError(self):
+        return min([l for l in self.trainError if l > 0])
+
+    def getBestTestError(self):
+        return min([l for l in self.testError if l > 0])
+
     def plotTrainError(self, l=(0, 100), flag_names_to_use_in_label=None):
         plt.title('Train Error')
         plt.xlabel('Epochs')
@@ -261,11 +267,22 @@ class ExperimentComperator:
         if self.y_logscale:
             plt.yscale('log')
 
+    def getBestTrainError(self, filter=None):
+        experiments = {k:v for k,v in self.experiments.items() if filter is None or filter(v)}
+        best_e = experiments.values()[0]
+        for i in experiments.keys():
+            if experiments[i].results.getBestTrainError() < best_e.results.getBestTrainError():
+                best_e = experiments[i]
+        return best_e
+
     #group_by is a name of a flag, its meaning is that we will present one plot
     #for each flag value present in e.
-    def compare(self, group_by='h', error_type='train'):
+    def compare(self, group_by='h', error_type='train', filter=None):
         import math
-        e = self.experiments
+        from matplotlib.font_manager import FontProperties
+
+
+        e = {k:v for k,v in self.experiments.items() if filter is None or filter(v)}
         r = {}
         for k in e.keys():
             r[k] = e[k].results
@@ -295,8 +312,11 @@ class ExperimentComperator:
                 else:
                     expr.results.plotTrainError((0,100), diff + [group_by])
             #plt.legend(loc='center left', bbox_to_anchor=(0.4, 1))
-            plt.legend()
 
+            fontP = FontProperties()
+            fontP.set_size('small')
+            #plt.legend("title", prop=fontP)
+            plt.legend(prop=fontP)
 
         #Now plot bars for the best score achived for each experiemnt value
         fig = plt.figure(figsize=(10,8))
@@ -320,17 +340,20 @@ class ExperimentComperator:
             for expr in expreiments:
                 final_label = expr.results.buildLabel(diff + [group_by])
                 if error_type == 'test':
-                    rect = ax.bar(pos, min([l for l in expr.results.testError if l > 0]), width,\
+                    rect = ax.bar(pos, expr.results.getBestTestError(), width,\
                               color=cycler.get())
                 else:
-                    rect = ax.bar(pos, min([l for l in expr.results.trainError if l > 0]), width,\
+                    rect = ax.bar(pos, expr.results.getBestTrainError(), width,\
                               color=cycler.get())
 
                 rects.append(rect)
                 labels.append(final_label)
                 pos += width
 
-            fig.gca().add_artist(ax.legend(rects, labels, loc=1, bbox_to_anchor=(1, nextLegendHeight)))
+            fontP = FontProperties()
+            fontP.set_size('small')
+            #plt.legend("title", prop=fontP)
+            fig.gca().add_artist(ax.legend(rects, labels, loc=1, bbox_to_anchor=(1, nextLegendHeight), prop=fontP))
             nextLegendHeight -= 0.1
             pos += 1
         #plt.legend()
