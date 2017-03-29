@@ -27,7 +27,7 @@ class ExperimentRunner:
         for e in experiments:
             _e = experiments_manager.ExperimentsManager.get().load_experiment(e)
             if _e is not None:
-                if force_rerun == False and len(_e.results.trainError) >= _e.getFlagValue('epochs'):
+                if force_rerun == False and len(_e.results[0].trainError) >= _e.getFlagValue('epochs'):
                     print 'Experiment ' + str(_e) + ' already ran!'
                     continue
             self.experiments.append(e)
@@ -154,13 +154,14 @@ class ExperimentRunner:
                         e.add_test_error(model_idx, total_losses[i])
                         i += 1
 
+                print 'Dumping results....'
+                self.dump_results()
+
                 print 'Set Training (setting batch size and train set)'
                 sess.run(set_training)
                 print 'Training'
                 optimizer.run_epoch(sess=sess)
 
-                print 'Dumping results....'
-                self.dump_results()
                 #dump eperiments before continue to next round!
 
                 # writer.flush()

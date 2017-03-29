@@ -80,8 +80,7 @@ class SeboostOptimizer:
 
 
     def run_iter(self, sess):
-        if self.curr_iter % self.params.values()[0].sgd_steps != 0 or \
-                (self.models[0].experiment.getFlagValue('hSize') == 0 and self.models[0].experiment.getFlagValue('nodes') == 1):
+        if self.curr_iter % self.params.values()[0].sgd_steps != 0:
             _, losses = sess.run([self.train_steps, self.losses])
             self.curr_iter += 1
             return None  # TODO: need to return loss per experiment here
@@ -99,9 +98,13 @@ class SeboostOptimizer:
         losses = {}
 
         for e in self.experiments:
-            models = e.models
-            master_model = models[0]
-            worker_models = models[1:]
+            if e.getFlagValue('hSize') == 0 and e.getFlagValue('nodes') == 1:
+                sess.run([self.params[m].train_step for m in e.models])
+                losses[e] = sess.run([m.loss() for m in e.models])
+                continue
+
+            master_model = e.models[0]
+            worker_models = e.models[1:]
 
             assert (master_model.node_id == 0)
 
