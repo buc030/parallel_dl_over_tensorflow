@@ -122,6 +122,11 @@ class HVar:
     #This must be called when alpahs are non zeros!!!
     def push_history_op(self):
         assert (self.node_id == 0)
+        if self.hSize == 0:
+            if 0 not in self.op_cache:
+                self.op_cache[0] = tf.no_op()
+            return self.op_cache[0]
+
 
         if self.next_idx not in self.op_cache:
             #print 'HVar Cache Miss, creating the op for var ' + str(self.var.name) + ', idx = ' + str(self.next_idx)
