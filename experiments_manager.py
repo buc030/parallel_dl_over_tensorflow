@@ -4,7 +4,7 @@
 import pickle
 import os
 
-#Singleton Not thread safe!!
+#TODO: Singleton Not thread safe!!
 class ExperimentsManager:
     BASE_PATH = '/tmp/generated_data/ExperimentsManager/'
     METADATA_FILE = BASE_PATH + 'metadata'
@@ -73,28 +73,29 @@ class ExperimentsManager:
         self.dump_experiment(experiment)
         return ExperimentsManager.TENSOR_BOARD_DIRS + str(self.metadata[experiment])
 
-    def set_current_experiment(self, experiment):
-        self.curr_experiment = experiment
-
-    def get_current_experiment(self):
-        return self.curr_experiment
-
     def dump_experiment(self, experiment):
 
         path = self.lookup_experiment_path(experiment)
         if path == None:
             path = self.allocate_experiment(experiment)
 
+        print 'Dumping into ' + str(path)
         with open(path, 'wb') as f:
             return pickle.dump(experiment, f)
+
+        #TODO: add dump model weights
 
     def load_experiment(self, experiment):
         path = self.lookup_experiment_path(experiment)
         if path is None:
             return None
+        print 'Loading from ' + str(path)
         with open(path, 'rb') as f:
             res = pickle.load(f)
-            experiment.results = res.results
+            #experiment.results = res.results
+
+            # TODO: add load model weights
+
             return res
 
 

@@ -39,6 +39,9 @@ class ExperimentResults:
         return res
 
     def getBestTrainError(self):
+        if len(self.trainError) == 0:
+            print 'No data!'
+            assert(False)
         return min([l for l in self.trainError if l > 0])
 
     def getBestTestError(self):
@@ -277,19 +280,16 @@ class ExperimentComperator:
 
     #group_by is a name of a flag, its meaning is that we will present one plot
     #for each flag value present in e.
-    def compare(self, group_by='h', error_type='train', filter=None):
+    def compare(self, group_by='h', error_type='train', filter=None, node_id=0):
         import math
         from matplotlib.font_manager import FontProperties
 
 
         e = {k:v for k,v in self.experiments.items() if filter is None or filter(v)}
-        r = {}
-        for k in e.keys():
-            r[k] = e[k].results
 
         #group ny flag
         apeared_values = {}
-        for k in r.keys():
+        for k in e.keys():
             if e[k].getFlagValue(group_by) not in apeared_values.keys():
                 apeared_values[e[k].getFlagValue(group_by)] = [] #this value has apeared
             apeared_values[e[k].getFlagValue(group_by)].append(e[k])
@@ -308,9 +308,9 @@ class ExperimentComperator:
 
                 #On the label, show the group_by value, and the diff values
                 if error_type == 'test':
-                    expr.results.plotTestError((0,100), diff + [group_by])
+                    expr.results[node_id].plotTestError((0,100), diff + [group_by])
                 else:
-                    expr.results.plotTrainError((0,100), diff + [group_by])
+                    expr.results[node_id].plotTrainError((0,100), diff + [group_by])
             #plt.legend(loc='center left', bbox_to_anchor=(0.4, 1))
 
             fontP = FontProperties()
@@ -338,12 +338,12 @@ class ExperimentComperator:
             rects = []
             labels = []
             for expr in expreiments:
-                final_label = expr.results.buildLabel(diff + [group_by])
+                final_label = expr.results[node_id].buildLabel(diff + [group_by])
                 if error_type == 'test':
-                    rect = ax.bar(pos, expr.results.getBestTestError(), width,\
+                    rect = ax.bar(pos, expr.results[node_id].getBestTestError(), width,\
                               color=cycler.get())
                 else:
-                    rect = ax.bar(pos, expr.results.getBestTrainError(), width,\
+                    rect = ax.bar(pos, expr.results[node_id].getBestTrainError(), width,\
                               color=cycler.get())
 
                 rects.append(rect)

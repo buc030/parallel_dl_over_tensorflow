@@ -9,21 +9,21 @@ import experiment_results
 import sys
 
 debug_list = []
-def fc_layer(input, n_in, n_out):
+def fc_layer(input, n_in, n_out, experiment):
     with tf.name_scope('FC'):
             #W = HVar(tf.random_normal([n_in, n_out]), name='W')
             #b = HVar(tf.zeros([n_out]), name='b')
 
-        W = HVar(tf.Variable(tf.random_normal([n_in, n_out]), name='W'))
-        b = HVar(tf.Variable(tf.zeros([n_out]), name='b'))
+        W = experiment.hvar_mgr.create_var(tf.Variable(tf.random_normal([n_in, n_out]), name='W'))
+        b = experiment.hvar_mgr.create_var(tf.Variable(tf.zeros([n_out]), name='b'))
         a = tf.matmul(input, W.out()) + b.out()
 
         debug_list.append(W)
 
         out = tf.nn.tanh(a)
 
-        SummaryManager.get().add_iter_summary(tf.summary.histogram('activations_before_tanh', a))
-        SummaryManager.get().add_iter_summary(tf.summary.histogram('activations_after_tanh', out))
+        experiment.summary_mgr.add_iter_summary(tf.summary.histogram('activations_before_tanh', a))
+        experiment.summary_mgr.add_iter_summary(tf.summary.histogram('activations_after_tanh', out))
 
         return out
 
@@ -45,7 +45,7 @@ def build_model(x, y, dim):
 
     loss_per_sample = tf.squared_difference(model_out, y, name='loss_per_sample')
     loss = tf.reduce_mean(loss_per_sample, name='loss')
-    SummaryManager.get().add_iter_summary(tf.summary.scalar('loss', loss))
+    experiment.summary_mgr.add_iter_summary(tf.summary.scalar('loss', loss))
 
     return model_out, loss
 
@@ -61,8 +61,8 @@ def _run_experiment(experiment, file_writer_suffix):
 
     #SV TODO: remove this hack!
     tf.reset_default_graph()
-    SummaryManager.get().reset()
-    HVar.reset()
+    experiment.summary_mgr.reset()
+    experiment.hvar_mgr.reset()
     tf.set_random_seed(1)
 
     bs = experiment.getFlagValue('b')
@@ -71,6 +71,7 @@ def _run_experiment(experiment, file_writer_suffix):
     epochs = experiment.getFlagValue('epochs')
     dim = experiment.getFlagValue('dim')
     dataset_size = experiment.getFlagValue('dataset_size')
+
     training_data, testing_data, training_labels, testing_labels = dataset_manager.DatasetManager().get_random_data(dim, dataset_size)
 
     print 'Running experiment with bs = ' + str(bs) + ', sesop_freq = ' + str(sesop_freq) + ', hSize = ' + str(hSize)
@@ -121,7 +122,7 @@ def _run_experiment(experiment, file_writer_suffix):
 
         model_out, loss = build_model(batched_input, batched_labels, dim)
 
-        optimizer = SeboostOptimizer(loss, batched_input, batched_labels)
+        optimizer = SeboostOptimizer(loss, batched_input, batched_labels, experiment)
 
         #hold acc loss
         with tf.name_scope('loss_accamulator'):
@@ -129,7 +130,7 @@ def _run_experiment(experiment, file_writer_suffix):
             train_loss_summary = tf.summary.scalar('train_loss', acc_loss)
             test_loss_summary = tf.summary.scalar('test_loss', acc_loss)
 
-        iter_summaries = SummaryManager.get().merge_iters()
+        iter_summaries = experiment.summary_mgr.merge_iters()
         optimizer.iter_summaries = iter_summaries
 
 
@@ -255,6 +256,9 @@ plt.show()
 ########################################################
 
 Experiment:
+for sesop_freq in [0.001, 0.01, 0.1, 0.5]:
+    for h in [0, 1, 2, 4, 8, 16, 32]:
+        for lr in [float(1)/2**j for j in range(0, 10)]:
                  'b': 100,
                  'sesop_freq': sesop_freq,
                  'hSize': h,

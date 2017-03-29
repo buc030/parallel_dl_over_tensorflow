@@ -61,14 +61,15 @@ class DatasetManager:
     def get_random_data(self, dim, n):
         #if data is already there simply take it
         try:
-            with open(DatasetManager.BASE_PATH + 'random_' + str(n), 'rb') as f:
+            with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_' + str(dim), 'rb') as f:
                 return pickle.load(f)
         except:
             pass
 
         #otherwise take it and dump it for next times
         data = generate_random_data(dim, n)
-        with open(DatasetManager.BASE_PATH + 'random_' + str(n), 'wb') as f:
+        print 'data shape = ' + str(data[0].shape) + ', dim = ' + str(dim)
+        with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_' + str(dim), 'wb') as f:
             self.metadata = pickle.dump(data, f)
 
         return data

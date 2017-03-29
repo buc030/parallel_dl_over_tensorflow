@@ -21,4 +21,15 @@ Where stuff are?
 /home/shai/anaconda/lib/python2.7/site-packages/tensorflow
 /home/shai/anaconda/lib/python2.7/site-packages/tensorflow/include/tensorflow
 
+Libaries:
+---------
+
+/usr/local/cuda-8.0/extras/CUPTI/lib64/libcupti.so.8.0
+/usr/local/cuda-8.0/extras/CUPTI/lib64/libcupti.so.8.0.61
+shai@gpu-plx01:~/tensorflow/parallel_sesop$ 
+shai@gpu-plx01:~/tensorflow/parallel_sesop$ 
+shai@gpu-plx01:~/tensorflow/parallel_sesop$ echo $LD_LIBRARY_PATH 
+
+export LD_LIBRARY_PATH=/usr/local/cuda-8.0/extras/CUPTI/lib64/:/usr/local/cuda-8.0/lib64:/usr/lib64:/usr/lib
+
 
