@@ -73,7 +73,7 @@ class Model:
             return weights
 
         def all_history_update_ops(self):
-
+            print 'e = ' + str(self.model.experiment)
             b4_sesop = []
             after_sesop = []
             for hvar in self.all_hvars:

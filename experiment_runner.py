@@ -229,8 +229,8 @@ i = 0
 for n in [1, 2, 4, 8]:
     for h in [0, 2, 4]:
         for lr in [1.0/2**j for j in range(3,7)]:
-# for n in [1]:
-#      for h in [5]:
+# for n in [2]:
+#      for h in [0]:
 #          for lr in [1.0/2**j for j in range(3,4)]:
             experiments[i] = experiment.Experiment(
             {'b': 10,

@@ -87,7 +87,6 @@ class HVar:
             self.pull_from_master = tf.assign(self.var, self.last_snapshot)
             self.push_to_master = tf.assign(self.replicas[self.node_id - 1], self.out())
 
-        self.update_history_before_sesop = {}
 
     def out(self):
         if self.o is not None:
@@ -133,7 +132,7 @@ class HVar:
         assert (self.node_id == 0)
         if self.hSize == 0:
             if 0 not in self.op_cache:
-                self.op_cache[0] = tf.no_op()
+                self.op_cache[0] = [tf.no_op(), tf.no_op()]
             return self.op_cache[0]
 
         if self.next_idx not in self.op_cache:
