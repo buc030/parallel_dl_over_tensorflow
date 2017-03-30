@@ -15,29 +15,42 @@ def display_results(experiments):
 
     comperator = experiment_results.ExperimentComperator(loaded_experiments)
 
-    comperator.compare(group_by='lr', error_type='train', filter=lambda e: e.getFlagValue('hidden_layers_num') > 0)
+    bests = {}
+    j = 0
+    for i in [1,2,4,8]:
+        bests[j] = comperator.getBestTrainError(filter=lambda e: e.getFlagValue('nodes') == i)
+        j += 1
+
+    comperator = experiment_results.ExperimentComperator(bests)
+    comperator.compare(group_by='b')
+    #comperator.compare(group_by='nodes', error_type='train', filter=lambda e: e.getFlagValue('hidden_layers_num') > 0)
     plt.show()
 
 
 experiments = {}
 i = 0
-for h in [0, 2]:
-    for n in [1, 2, 4, 8]:
-        experiments[i] = experiment.Experiment(
-        {'b': 10,
-         'sesop_batch_size': 100,
-         'sesop_freq': 0.1,
-         'hSize': h,
-         'epochs': 100,  # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
-         'dim': 10,
-         'lr': 0.06,
-         'dataset_size': 5000,
-         'model': 'simple',
-         'hidden_layers_num': 3,
-         'hidden_layers_size': 10,
-         'nodes': n
-         })
-        i += 1
+for n in [1, 2, 4, 8]:
+    for h in [0, 2, 4]:
+        for lr in [1.0/2**j for j in range(3,7)]:
+# for n in [1]:
+#      for h in [5]:
+#          for lr in [1.0/2**j for j in range(3,4)]:
+            experiments[i] = experiment.Experiment(
+            {'b': 10,
+             'sesop_batch_size': 300,
+             'sesop_freq': 10.0/5000.0, #sesop once an epoch
+             'hSize': h,
+             'epochs': 50,  # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
+             'dim': 10,
+             'lr': lr,
+             'dataset_size': 5000,
+             'model': 'simple',
+             'hidden_layers_num': 3,
+             'hidden_layers_size': 10,
+             'nodes': n
+             })
+            i += 1
+
 
 
 display_results(experiments)

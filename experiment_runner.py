@@ -27,7 +27,7 @@ class ExperimentRunner:
         for e in experiments:
             _e = experiments_manager.ExperimentsManager.get().load_experiment(e)
             if _e is not None:
-                if force_rerun == False and len(_e.results[0].trainError) >= _e.getFlagValue('epochs'):
+                if force_rerun == False and len(_e.results) > 0  and len(_e.results[0].trainError) >= _e.getFlagValue('epochs'):
                     print 'Experiment ' + str(_e) + ' already ran!'
                     continue
             self.experiments.append(e)
@@ -60,7 +60,7 @@ class ExperimentRunner:
 
         config = tf.ConfigProto()
         # config.gpu_options.allow_growth = True
-        #config.allow_soft_placement = True
+        config.allow_soft_placement = True
 
         # with tf.Session('grpc://' + tf_server, config=config) as sess:
         with tf.Session(config=config) as sess:
@@ -138,6 +138,7 @@ class ExperimentRunner:
                 print 'Computing train error'
                 sess.run(set_full_batch_training)
                 total_losses = sess.run(losses)
+                print 'Train error = ' + str(total_losses)
                 i = 0
                 for e in self.experiments:
                     for model_idx in range(len(e.models)):
@@ -149,6 +150,7 @@ class ExperimentRunner:
                 sess.run(set_full_batch_testing)
                 total_losses = sess.run(losses)
                 i = 0
+                print 'Test error = ' + str(total_losses)
                 for e in self.experiments:
                     for model_idx in range(len(e.models)):
                         e.add_test_error(model_idx, total_losses[i])
@@ -224,23 +226,27 @@ for b in [10, 100]:
 
 experiments = {}
 i = 0
-for h in [0, 2]:
-    for n in [1, 2, 4, 8]:
-        experiments[i] = experiment.Experiment(
-        {'b': 10,
-         'sesop_batch_size': 100,
-         'sesop_freq': 0.1,
-         'hSize': h,
-         'epochs': 100,  # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
-         'dim': 10,
-         'lr': 0.06,
-         'dataset_size': 5000,
-         'model': 'simple',
-         'hidden_layers_num': 3,
-         'hidden_layers_size': 10,
-         'nodes': n
-         })
-        i += 1
+for n in [1, 2, 4, 8]:
+    for h in [0, 2, 4]:
+        for lr in [1.0/2**j for j in range(3,7)]:
+# for n in [1]:
+#      for h in [5]:
+#          for lr in [1.0/2**j for j in range(3,4)]:
+            experiments[i] = experiment.Experiment(
+            {'b': 10,
+             'sesop_batch_size': 300,
+             'sesop_freq': 10.0/5000.0, #sesop once an epoch
+             'hSize': h,
+             'epochs': 50,  # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
+             'dim': 10,
+             'lr': lr,
+             'dataset_size': 5000,
+             'model': 'simple',
+             'hidden_layers_num': 3,
+             'hidden_layers_size': 10,
+             'nodes': n
+             })
+            i += 1
 
 runner = ExperimentRunner(experiments, force_rerun=False)
 runner.run()

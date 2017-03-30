@@ -274,7 +274,7 @@ class ExperimentComperator:
         experiments = {k:v for k,v in self.experiments.items() if filter is None or filter(v)}
         best_e = experiments.values()[0]
         for i in experiments.keys():
-            if experiments[i].results.getBestTrainError() < best_e.results.getBestTrainError():
+            if experiments[i].results[0].getBestTrainError() < best_e.results[0].getBestTrainError():
                 best_e = experiments[i]
         return best_e
 

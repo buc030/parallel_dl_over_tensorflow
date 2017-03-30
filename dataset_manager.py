@@ -15,14 +15,16 @@ def fc_layer(input, n_in, n_out):
     return out
 
 
-def build_model(x, y, dim):
+def build_model(x, dim, out_dim):
     layers = [fc_layer(x, dim, 2*dim)]
     for i in range(1):
         layers.append(fc_layer(layers[-1], 2*dim, dim))
-    layers.append(fc_layer(layers[-1], dim, 1))
+    layers.append(fc_layer(layers[-1], dim, out_dim))
     model_out = layers[-1]
 
     return model_out
+
+#def zero_random_matrix_value(cov):
 
 def generate_random_data(dim, n):
     cov = np.random.rand(dim, dim)
@@ -33,7 +35,8 @@ def generate_random_data(dim, n):
 
     with tf.name_scope('generating_data'):
         x = tf.placeholder(tf.float32, shape=[None, dim], name='x')
-        model_out = build_model(x, None, dim)
+        data_model_out = build_model(x, dim, dim)
+        label_model_out = build_model(x, dim, 1)
 
         #with tf.Session('grpc://' + tf_server, config=config) as sess:
         config = tf.ConfigProto()
@@ -41,8 +44,12 @@ def generate_random_data(dim, n):
         #config.gpu_options.allow_growth = True
         with tf.Session(config=config) as sess:
             sess.run(tf.global_variables_initializer())
-            training_labels = sess.run(model_out, feed_dict={x: training_data})
-            testing_labels = sess.run(model_out, feed_dict={x: testing_data})
+
+            training_data = sess.run(data_model_out, feed_dict={x: training_data})
+            testing_data = sess.run(data_model_out, feed_dict={x: testing_data})
+
+            training_labels = sess.run(label_model_out, feed_dict={x: training_data})
+            testing_labels = sess.run(label_model_out, feed_dict={x: testing_data})
 
         return training_data, testing_data, training_labels, testing_labels
 
@@ -61,7 +68,7 @@ class DatasetManager:
     def get_random_data(self, dim, n):
         #if data is already there simply take it
         try:
-            with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_' + str(dim), 'rb') as f:
+            with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_dim_' + str(dim), 'rb') as f:
                 return pickle.load(f)
         except:
             pass
@@ -69,7 +76,7 @@ class DatasetManager:
         #otherwise take it and dump it for next times
         data = generate_random_data(dim, n)
         print 'data shape = ' + str(data[0].shape) + ', dim = ' + str(dim)
-        with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_' + str(dim), 'wb') as f:
+        with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_dim_' + str(dim), 'wb') as f:
             self.metadata = pickle.dump(data, f)
 
         return data

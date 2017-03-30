@@ -25,7 +25,7 @@ class SeboostOptimizerParams:
 
         self.cg_var_list = model.hvar_mgr.all_trainable_alphas()
         self.cg = tf.contrib.opt.ScipyOptimizerInterface(model.loss(), var_list=self.cg_var_list, \
-                                                         method='CG', options={'maxiter': 5})
+                                                         method='CG', options={'maxiter': 10})
 
 
 
@@ -89,6 +89,10 @@ class SeboostOptimizer:
 
     def run_sesop(self, sess):
 
+        #sess.run(self.models[0].get_batch_provider().set_batch_size_op(self.dataset_size))
+        #full_data, full_labels = sess.run(self.models[0].get_batch_provider().batch())
+
+
         # Get batch for sesop:
         sess.run(self.models[0].get_batch_provider().set_batch_size_op(self.params.values()[0].sesop_batch_size))
         sesop_data, sesop_labels = sess.run(self.models[0].get_batch_provider().batch())
@@ -111,23 +115,49 @@ class SeboostOptimizer:
             for worker in worker_models:
                 sess.run(worker.push_to_master_op())
 
+            b4_sesop, after_sesop = master_model.hvar_mgr.all_history_update_ops()
+            #Push the new direction into P:
+            sess.run(b4_sesop)
+
             #Now optimize by alpha
+            feed_dict = {}
+            inputs, labels = master_model.get_inputs()
+            feed_dict[inputs] = sesop_data
+            feed_dict[labels] = sesop_labels
+
+            #master_model.dump_to_tensorboard(sess)
+            #master_model.dump_to_tensorboard(sess)
+            master_model.dump_to_tensorboard(sess)
+
+            #loss_b4_sesop = sess.run(master_model.loss() ,feed_dict={inputs: full_data, labels: full_labels})
+            self.params[master_model].cg.minimize(sess, feed_dict=feed_dict)
+            #loss_after_sesop = sess.run(master_model.loss(), feed_dict={inputs: full_data, labels: full_labels})
+
+
+            #print 'loss_b4_sesop - loss_after_sesop = ' + str(loss_b4_sesop - loss_after_sesop)
+            #assert(False)
+            #master_model.log_loss_b4_minus_after(sess, loss_b4_sesop - loss_after_sesop)
+
+
+            master_model.dump_to_tensorboard(sess)
+            #master_model.summary_mgr.writer.flush()
+            #Update the history:
+            sess.run(after_sesop)
+
+            #Now send the results back to the workers
+            for worker in worker_models:
+                #TODO: worker.assert_have_no_alpa_or_history_or_replicas()
+                sess.run(worker.pull_from_master_op())
+
             feed_dict = {}
             for m in e.models:
                 inputs, labels = m.get_inputs()
                 feed_dict[inputs] = sesop_data
                 feed_dict[labels] = sesop_labels
 
-            self.params[master_model].cg.minimize(sess, feed_dict=feed_dict)
-
-            #Update the history:
-            sess.run(master_model.hvar_mgr.all_history_update_ops())
-
-            #Now send the results back to the workers
-            for worker in worker_models:
-                sess.run(worker.pull_from_master_op())
-
+            assert(len(feed_dict) == 2*len(e.models))
             losses[e] = sess.run([m.loss() for m in e.models], feed_dict=feed_dict)
+
 
         self.sesop_runs += 1
         self.curr_iter += 1

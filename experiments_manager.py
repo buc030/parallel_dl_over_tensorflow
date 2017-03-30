@@ -69,9 +69,9 @@ class ExperimentsManager:
             ExperimentsManager.inst = ExperimentsManager()
         return ExperimentsManager.inst
 
-    def get_experiment_tensorboard_dir(self, experiment):
+    def get_experiment_tensorboard_dir(self, experiment, model_idx):
         self.dump_experiment(experiment)
-        return ExperimentsManager.TENSOR_BOARD_DIRS + str(self.metadata[experiment])
+        return ExperimentsManager.TENSOR_BOARD_DIRS + str(self.metadata[experiment]) + '/model_' + str(model_idx)
 
     def dump_experiment(self, experiment):
 

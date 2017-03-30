@@ -79,14 +79,15 @@ class HVar:
 
         self.zero_alpha = None
         if self.node_id == 0:
+            self.update_history_op()
             for i in range(self.hSize):
-                self.push_history_op() #make sure all ops are created
-
-        assert(self.next_idx == 0)
+                self.update_history_op() #make sure all ops are created
 
         if self.node_id != 0:
             self.pull_from_master = tf.assign(self.var, self.last_snapshot)
             self.push_to_master = tf.assign(self.replicas[self.node_id - 1], self.out())
+
+        self.update_history_before_sesop = {}
 
     def out(self):
         if self.o is not None:
@@ -99,7 +100,7 @@ class HVar:
 
             if self.node_id == 0:
                 for r, a in zip(self.history, self.history_aplha):
-                    self.o += r * a
+                    self.o += r*a
 
                 for r, a in zip(self.replicas, self.replicas_aplha):
                     self.o += r*a
@@ -118,17 +119,25 @@ class HVar:
         assert (self.node_id != 0)
         return self.pull_from_master
 
-    # returns an op that updates history and snapshot (executed after optimization on alpha)
+    #return an op that pushes the current progress into history, we need to do this before we optimize by alpha
+    #To approximly maintain the expanding mandifold property.
+    # This must be called when alpahs are zeros!!!
+    def update_history_before_sesop_op(self):
+        return tf.assign(self.history[self.next_idx], self.out() - self.last_snapshot)
+
+    #return 2 ops:
+    # 1. an op that pushes the current progress into history, we need to do this before we optimize by alpha
+    # 2. an op that updates history and snapshot (executed after optimization on alpha)
     #This must be called when alpahs are non zeros!!!
-    def push_history_op(self):
+    def update_history_op(self):
         assert (self.node_id == 0)
         if self.hSize == 0:
             if 0 not in self.op_cache:
                 self.op_cache[0] = tf.no_op()
             return self.op_cache[0]
 
-
         if self.next_idx not in self.op_cache:
+            self.op_cache[self.next_idx] = [self.update_history_before_sesop_op()]
             #print 'HVar Cache Miss, creating the op for var ' + str(self.var.name) + ', idx = ' + str(self.next_idx)
             with tf.name_scope(self.name + '_update'):
 
@@ -144,8 +153,7 @@ class HVar:
                             #finally we reset all the alphas (infact we can take this out of the dependecy)
                             #as it only affect self.out()
                             reset_alpha_op = self.zero_alpha_op()
-                            self.op_cache[self.next_idx] =\
-                                tf.group(update_history_op, update_var_op, update_snapshot_op, reset_alpha_op)
+                            self.op_cache[self.next_idx].append(tf.group(update_history_op, update_var_op, update_snapshot_op, reset_alpha_op))
 
         old_idx = self.next_idx
         self.next_idx = (self.next_idx + 1)%self.hSize
