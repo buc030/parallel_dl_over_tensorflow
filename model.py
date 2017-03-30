@@ -8,7 +8,7 @@ from experiments_manager import ExperimentsManager
 class FCLayer:
     def __init__(self, input, n_in, n_out, model, prefix):
         with tf.variable_scope(prefix):
-            print 'prefix = ' + str(prefix)
+            #print 'prefix = ' + str(prefix)
             self.W = model.hvar_mgr.create_var(tf.Variable(tf.random_normal([n_in, n_out], seed=1), name='W'))
 
             self.b = model.hvar_mgr.create_var(tf.Variable(tf.zeros([n_out]), name='b'))
@@ -129,7 +129,8 @@ class Model:
 
         self.i = 0
         self.j = 0
-        if not (self.experiment.getFlagValue('hSize') == 0 and self.experiment.getFlagValue('nodes') == 1) and self.node_id != 1:
+        if not (self.experiment.getFlagValue('hSize') == 0 ) and self.node_id == 0:
+            #print 'experiment = ' + str(experiment)
             self.mergered_summeries = self.summary_mgr.merge_iters()
 
         print 'Dumping into tensorboard ' + str(self.tensorboard_dir)
@@ -140,7 +141,7 @@ class Model:
         self.j += 1
 
     def dump_to_tensorboard(self, sess):
-        if (self.experiment.getFlagValue('hSize') == 0 and self.experiment.getFlagValue('nodes') == 1) or self.node_id == 1:
+        if (self.experiment.getFlagValue('hSize') == 0) or self.node_id != 0:
             return
         #print 'Dumping into tensorboard ' + str(self.tensorboard_dir)
 
