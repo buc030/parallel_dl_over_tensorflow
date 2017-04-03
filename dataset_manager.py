@@ -26,17 +26,17 @@ def build_model(x, dim, out_dim):
 
 #def zero_random_matrix_value(cov):
 
-def generate_random_data(dim, n):
-    cov = np.random.rand(dim, dim)
+def generate_random_data(input_dim, output_dim, n):
+    cov = np.random.rand(input_dim, input_dim)
     cov = np.dot(cov, cov.transpose())
 
-    training_data = np.random.multivariate_normal(np.zeros(dim), cov, n)
-    testing_data = np.random.multivariate_normal(np.zeros(dim), cov, n)
+    training_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
+    testing_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
 
     with tf.name_scope('generating_data'):
-        x = tf.placeholder(tf.float32, shape=[None, dim], name='x')
-        data_model_out = build_model(x, dim, dim)
-        label_model_out = build_model(x, dim, 1)
+        x = tf.placeholder(tf.float32, shape=[None, input_dim], name='x')
+        data_model_out = build_model(x, input_dim, input_dim)
+        label_model_out = build_model(x, input_dim, output_dim)
 
         #with tf.Session('grpc://' + tf_server, config=config) as sess:
         config = tf.ConfigProto()
@@ -65,18 +65,18 @@ class DatasetManager:
             except os.OSError as exc:  # Guard against race condition
                 if exc.errno != os.errno.EEXIST:
                     raise
-    def get_random_data(self, dim, n):
+    def get_random_data(self, input_dim, output_dim, n):
         #if data is already there simply take it
         try:
-            with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_dim_' + str(dim), 'rb') as f:
+            with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_inputdim_' + str(input_dim) + '_outputdim_' + str(output_dim), 'rb') as f:
                 return pickle.load(f)
         except:
             pass
 
         #otherwise take it and dump it for next times
-        data = generate_random_data(dim, n)
-        print 'data shape = ' + str(data[0].shape) + ', dim = ' + str(dim)
-        with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_dim_' + str(dim), 'wb') as f:
+        data = generate_random_data(input_dim, output_dim, n)
+        #print 'data shape = ' + str(data[0].shape) + ', dim = ' + str(dim)
+        with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_inputdim_' + str(input_dim) + '_outputdim_' + str(output_dim), 'wb') as f:
             self.metadata = pickle.dump(data, f)
 
         return data

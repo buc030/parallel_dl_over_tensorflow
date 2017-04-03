@@ -21,6 +21,10 @@ class ExperimentResults:
         self.flags = flags
         self.trainError = []
         self.testError = []
+        self.trainErrorPerItereation = []
+
+
+
         self.epochTimes = []
         self.epochsDone = 0
         self.errors_b4_merge = []
@@ -42,10 +46,10 @@ class ExperimentResults:
         if len(self.trainError) == 0:
             print 'No data!'
             assert(False)
-        return min([l for l in self.trainError if l > 0])
+        return min([1 - l for l in self.trainError if l > 0])
 
     def getBestTestError(self):
-        return min([l for l in self.testError if l > 0])
+        return min([1 - l for l in self.testError if l > 0])
 
     def plotTrainError(self, l=(0, 100), flag_names_to_use_in_label=None):
         plt.title('Train Error')

@@ -8,6 +8,9 @@ from model import Model
 import experiments_manager
 import progressbar
 from experiment import Experiment
+from batch_provider import SimpleBatchProvider
+from cifar_input import build_input
+import numpy as np
 
 class ExperimentRunner:
 
@@ -21,14 +24,19 @@ class ExperimentRunner:
 
     def __init__(self, experiments, force_rerun = False):
 
+        self.force_rerun = force_rerun
         experiments = list(experiments.values())
         self.experiments = []
 
         for e in experiments:
             _e = experiments_manager.ExperimentsManager.get().load_experiment(e)
             if _e is not None:
-                if force_rerun == False and len(_e.results) > 0  and len(_e.results[0].trainError) >= _e.getFlagValue('epochs'):
-                    print 'Experiment ' + str(_e) + ' already ran!'
+                if force_rerun == False and len(_e.results) > 0:
+                    if len(_e.results[0].trainError) >= _e.getFlagValue('epochs'):
+                        print 'Experiment ' + str(_e) + ' already ran!'
+                    else:
+                        print 'Experiment ' + str(_e) + ' ran for ' + str(len(_e.results[0].trainErrorPerItereation)) + ' iterations...'
+                        self.experiments.append(_e)
                     continue
             self.experiments.append(e)
 
@@ -38,16 +46,57 @@ class ExperimentRunner:
         self.assert_all_experiments_has_same_flag('b')
         self.assert_all_experiments_has_same_flag('sesop_freq')
         self.assert_all_experiments_has_same_flag('sesop_batch_size')
+        self.assert_all_experiments_has_same_flag('model')
 
         self.bs = experiments[0].getFlagValue('b')
         self.epochs = experiments[0].getFlagValue('epochs')
         self.dataset_size = experiments[0].getFlagValue('dataset_size')
-        self.dim = experiments[0].getFlagValue('dim')
+        self.input_dim = experiments[0].getFlagValue('dim')
+        self.output_dim = experiments[0].getFlagValue('output_dim')
+
+        self.batch_size = experiments[0].getFlagValue('b')
         self.sesop_batch_size = experiments[0].getFlagValue('sesop_batch_size')
+
+        if experiments[0].getFlagValue('model') == 'simple':
+            self.train_dataset_size = 5000
+            self.test_dataset_size = 5000
+        elif experiments[0].getFlagValue('model') == 'cifar10':
+            self.train_dataset_size = 50000
+            self.test_dataset_size = 10000
+        else:
+            assert(False)
 
     def dump_results(self):
         for e in self.experiments:
             experiments_manager.ExperimentsManager.get().dump_experiment(e)
+
+    #return a list of the models, losses, accuracies, after the done experiments were removed
+    def remove_finished_experiments(self):
+        models, losses, accuracies = [], [], []
+        to_remove = []
+        for e in self.experiments:
+            if len(e.results[0].trainErrorPerItereation) >= e.getFlagValue('epochs')*(self.train_dataset_size/self.batch_size):
+                print 'Experiment ' + str(e) + ' is done! Removing it from run...'
+                to_remove.append(e)
+
+        for e in to_remove:
+            self.experiments.remove(e)
+
+        for e in self.experiments:
+            models.extend(e.models)
+
+        losses = [m.loss() for m in models]
+        accuracies = [m.accuracy() for m in models]
+
+        return models, losses, accuracies
+
+    def add_experiemnts_results(self, train_error, test_error):
+        i = 0
+        for e in self.experiments:
+            for model_idx in range(len(e.models)):
+                e.add_train_error(model_idx, train_error[i])
+                e.add_test_error(model_idx, test_error[i])
+                i += 1
 
     #run all the experiments in parallel
     def run(self):
@@ -62,21 +111,9 @@ class ExperimentRunner:
         # config.gpu_options.allow_growth = True
         config.allow_soft_placement = True
 
+        #'grpc://' + tf_server
         # with tf.Session('grpc://' + tf_server, config=config) as sess:
         with tf.Session(config=config) as sess:
-
-
-            models = []
-            a,b,c,d = DatasetManager().get_random_data(dim=self.dim, n=self.dataset_size)
-
-            max_nodes_in_experiment = max([e.getFlagValue('nodes') for e in self.experiments])
-
-
-            with tf.variable_scope('batch_providers') as scope:
-                batch_providers = []
-                for i in range(max_nodes_in_experiment):
-                    batch_providers.append(BatchProvider(a, b, c, d, [self.bs, self.sesop_batch_size, self.dataset_size]))
-                    scope.reuse_variables()
 
             print 'building models (first e = '  + str(self.experiments[0]) + ')'
             bar = progressbar.ProgressBar(maxval=len(self.experiments), \
@@ -84,21 +121,17 @@ class ExperimentRunner:
             bar.start()
             i = 0
             expr_num = 0
+            batch_providers = []
             for e in self.experiments:
-
-                with tf.device('/gpu:' + str(i%4)):
-                    with tf.variable_scope('experiment_' + str(expr_num)):
-                        e.init_models(batch_providers[0:e.getFlagValue('nodes')])
-                        #All models should have the same init
-                        models.extend(e.models)
-
+                batch_providers.extend(e.init_batch_providers(sess))
+                with tf.variable_scope('experiment_' + str(expr_num)):
+                    e.init_models(i%4)
                 i += 1
                 expr_num += 1
                 bar.update(i)
             bar.finish()
 
-            print 'Setup losses'
-            losses = [m.loss() for m in models]
+
 
             print 'Setting up optimizers'
             optimizer = SeboostOptimizer(self.experiments)
@@ -107,6 +140,14 @@ class ExperimentRunner:
             sess.run(tf.local_variables_initializer())
             sess.run(tf.global_variables_initializer())
 
+            print 'Reload/Dumping models'
+            for e in self.experiments:
+                if e.getFlagValue('epochs') > 0 and self.force_rerun == False:
+                    for m in e.models:
+                        m.init_from_checkpoint(sess)
+                else:
+                    for m in e.models:
+                        m.dump_checkpoint(sess)
 
             sess.graph.finalize()
 
@@ -115,17 +156,6 @@ class ExperimentRunner:
             threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
 
-
-            #All models have the same batch provider!
-            set_full_batch_training = [models[0].get_batch_provider().set_batch_size_op(self.dataset_size)] + \
-                [models[0].get_batch_provider().set_training_op(True)]
-
-            set_full_batch_testing = [models[0].get_batch_provider().set_batch_size_op(self.dataset_size)] + \
-                [models[0].get_batch_provider().set_training_op(False)]
-
-            set_training = [models[0].get_batch_provider().set_batch_size_op(self.bs)] + \
-                [models[0].get_batch_provider().set_training_op(True)]
-
             print 'Write graph into tensorboard'
             writer = tf.summary.FileWriter('/tmp/generated_data/' + '1')
             writer.add_graph(sess.graph)
@@ -133,34 +163,35 @@ class ExperimentRunner:
             # Progress bar:
             for epoch in range(self.epochs):
 
+                print 'Setup losses'
+                models, losses, accuracies = self.remove_finished_experiments()
+
                 # run 20 steps (full batch optimization to start with)
                 print 'epoch #' + str(epoch)
-                print 'Computing train error'
-                sess.run(set_full_batch_training)
-                total_losses = sess.run(losses)
-                print 'Train error = ' + str(total_losses)
-                i = 0
-                for e in self.experiments:
-                    for model_idx in range(len(e.models)):
-                        e.add_train_error(model_idx, total_losses[i])
-                        i += 1
+                print 'Computing train and test Accuracy'
+                train_error, test_error = np.zeros(len(models)), np.zeros(len(models))
 
+                careless_batch_size = 1000
+                assert (self.train_dataset_size % careless_batch_size == 0)
+                assert (self.test_dataset_size % careless_batch_size == 0)
+                for i in range(self.train_dataset_size / careless_batch_size):
+                    train_error_feed = models[0].get_shared_feed(sess, careless_batch_size, True, models[1:])
+                    train_error +=  np.array(sess.run(accuracies, feed_dict=train_error_feed))
+                train_error /= float(self.train_dataset_size / careless_batch_size)
+                print 'Train Accuracy = ' + str(train_error)
 
-                print 'Computing test error'
-                sess.run(set_full_batch_testing)
-                total_losses = sess.run(losses)
-                i = 0
-                print 'Test error = ' + str(total_losses)
-                for e in self.experiments:
-                    for model_idx in range(len(e.models)):
-                        e.add_test_error(model_idx, total_losses[i])
-                        i += 1
+                for i in range(self.test_dataset_size / careless_batch_size):
+                    test_error_feed = models[0].get_shared_feed(sess, careless_batch_size, False, models[1:])
+                    test_error += np.array(sess.run(accuracies, feed_dict=test_error_feed))
+                test_error /= float(self.test_dataset_size / careless_batch_size)
+                print 'Test Accuracy = ' + str(test_error)
 
                 print 'Dumping results....'
+                self.add_experiemnts_results(train_error, test_error)
                 self.dump_results()
+                for m in models:
+                    m.dump_checkpoint(sess)
 
-                print 'Set Training (setting batch size and train set)'
-                sess.run(set_training)
                 print 'Training'
                 optimizer.run_epoch(sess=sess)
 
@@ -173,90 +204,75 @@ class ExperimentRunner:
 
 import experiment
 
-experiments = {}
-"""
-i = 0
-
-for b in [10, 100]:
-    # make sure we break here...
-    if len(experiments) > 0:
-        print 'Running ' + str(len(experiments)) + ' experiments in parallel!'
-        runner = ExperimentRunner(experiments, force_rerun=False)
-        runner.run()
-
-    experiments = {}
-    i = 0
-
-    for sesop_freq in [0.01, 0.1]:
-        #make sure we break here...
-        if len(experiments) > 0:
-            print 'Running ' + str(len(experiments)) + ' experiments in parallel!'
-            runner = ExperimentRunner(experiments, force_rerun=False)
-            runner.run()
-
-        experiments = {}
-        i = 0
-
-        for hidden_layers_num in [1, 2, 4, 8]:
-            for h in [2**z for z in range(0, 8)]:
-                for lr in [float(1)/2**j for j in range(4, 8)]:
-                #for lr in [1.0/32, 1.0/64, 1.0/128]:
-                    experiments[i] = experiment.Experiment(
-                        {'b': b,
-                         'sesop_freq': sesop_freq,
-                         'hSize': h,
-                         'epochs': 100, #saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
-                         'dim': 10,
-                         'lr': lr,
-                         'dataset_size': 5000,
-                         'model': 'simple',
-                         'hidden_layers_num': hidden_layers_num,
-                         'hidden_layers_size': 10
-                         })
-                    i += 1
-
-                    #Run in chunks of 16 (4 experiments per GPU!)
-                    if i == 4:
-                        print 'Running ' + str(len(experiments)) + ' experiments in parallel!'
-                        runner = ExperimentRunner(experiments, force_rerun=False)
-                        runner.run()
-                        experiments = {}
-                        i = 0
-"""
 
 experiments = {}
 i = 0
-for n in [1, 2, 4, 8]:
-    for h in [0, 2, 4]:
-        for lr in [1.0/2**j for j in range(3,7)]:
-# for n in [2]:
-#      for h in [0]:
-#          for lr in [1.0/2**j for j in range(3,4)]:
+# for n in [1, 2, 4, 8]:
+#     for h in [0, 2, 4, 8]:
+#         for lr in [1.0/2**j for j in range(3,8)]:
+
+#50000 training images and 10000
+
+#Best conf for cifar10
+
+def run_cifar_expr():
+    ns =  [1    ]#,   1  ,    2   ,   4       ,4      ]
+    hs =  [0    ]#,   1  ,    1   ,   1       ,4      ]
+    lrs = [0.1  ]#,   0.1,    0.05,   0.025   ,0.025  ]
+
+    for n,h,lr in zip(ns, hs, lrs):
+        experiments[len(experiments)] = experiment.Experiment(
+            {
+                'model': 'cifar10',
+                'b': 128,
+                'lr': lr,
+                'sesop_batch_size': 1000,
+                'sesop_freq': (1.0 / 50000.0),  # sesop every 1 epochs (no sesop)
+                'hSize': h,
+                'epochs': 250,
+            # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
+                'nodes': n,
+
+                # Not relevant!
+                'dim': None,
+                'output_dim': None,
+                'dataset_size': None,
+                'hidden_layers_num': None,
+                'hidden_layers_size': None
+
+            })
+
+    runner = ExperimentRunner(experiments, force_rerun=True)
+    runner.run()
+
+run_cifar_expr()
+
+
+"""
+for n in [1]:
+     for h in [1]:
+         for lr in [0.1]:#[1.0/2**j for j in range(3,4)]:
             experiments[i] = experiment.Experiment(
-            {'b': 10,
-             'sesop_batch_size': 300,
-             'sesop_freq': 10.0/5000.0, #sesop once an epoch
-             'hSize': h,
-             'epochs': 50,  # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
-             'dim': 10,
+            {
+             'model': 'cifar10',
+             'b': 128,
              'lr': lr,
-             'dataset_size': 5000,
-             'model': 'simple',
-             'hidden_layers_num': 3,
-             'hidden_layers_size': 10,
-             'nodes': n
+             'sesop_batch_size': 1000,
+             'sesop_freq': (1.0/50000.0)/300, #sesop every 300 epochs (no sesop)
+             'hSize': h,
+             'epochs': 250,  # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
+             'nodes': n,
+
+             #Not relevant!
+             'dim': None,
+             'output_dim': None,
+             'dataset_size': None,
+             'hidden_layers_num': None,
+             'hidden_layers_size': None
+
              })
             i += 1
 
 runner = ExperimentRunner(experiments, force_rerun=False)
 runner.run()
-
-import experiment_results
-
-comperator = experiment_results.ExperimentComperator(experiments)
-
-
-import matplotlib.pyplot as plt
-
-comperator.compare(group_by='b', error_type='train')
-plt.show()
+"""

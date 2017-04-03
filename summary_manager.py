@@ -7,6 +7,8 @@ class SummaryManager:
         self.path = path
         self.writer = tf.summary.FileWriter(path)
 
+        print 'TensorBoard path: ' + str(path)
+
     def add_iter_summary(self, s):
         self.iter_summaries.append(s)
 

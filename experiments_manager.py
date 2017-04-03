@@ -4,11 +4,12 @@
 import pickle
 import os
 
-#TODO: Singleton Not thread safe!!
+#Manage the whereabout of the data of the experiments
 class ExperimentsManager:
     BASE_PATH = '/tmp/generated_data/ExperimentsManager/'
     METADATA_FILE = BASE_PATH + 'metadata'
     TENSOR_BOARD_DIRS = BASE_PATH + 'TensorBoard/'
+    MODEL_CHECKPOINT_DIRS = BASE_PATH + 'ModelCheckpoints/'
     inst = None
 
     def __init__(self):
@@ -69,9 +70,12 @@ class ExperimentsManager:
             ExperimentsManager.inst = ExperimentsManager()
         return ExperimentsManager.inst
 
-    def get_experiment_tensorboard_dir(self, experiment, model_idx):
+    def get_experiment_model_tensorboard_dir(self, experiment, model_idx):
         self.dump_experiment(experiment)
         return ExperimentsManager.TENSOR_BOARD_DIRS + str(self.metadata[experiment]) + '/model_' + str(model_idx)
+
+    def get_experiment_model_checkpoint_dir(self, experiment, model_idx):
+        return ExperimentsManager.MODEL_CHECKPOINT_DIRS + str(self.metadata[experiment]) + '/model_' + str(model_idx)
 
     def dump_experiment(self, experiment):
 

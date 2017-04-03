@@ -18,13 +18,12 @@ class SeboostOptimizerParams:
 
         self.lr = model.experiment.getFlagValue('lr')
         self.sgd_steps = int(1.0/model.experiment.getFlagValue('sesop_freq'))
-        self.sesop_batch_size = model.experiment.getFlagValue('sesop_batch_size')
+        self.sesop_batch_size = model.experiment.sesop_batch_size
         self.batch_size = model.experiment.getFlagValue('b')
-        self.train_step = tf.train.GradientDescentOptimizer(learning_rate=self.lr).minimize(model.loss(), name='minimizer', \
-            var_list=model.hvar_mgr.all_trainable_weights())
 
         self.cg_var_list = model.hvar_mgr.all_trainable_alphas()
-        self.cg = tf.contrib.opt.ScipyOptimizerInterface(model.loss(), var_list=self.cg_var_list, \
+        if len(self.cg_var_list) > 0:
+            self.cg = tf.contrib.opt.ScipyOptimizerInterface(model.loss(), var_list=self.cg_var_list, \
                                                          method='CG', options={'maxiter': 10})
 
 
@@ -38,8 +37,8 @@ class SeboostOptimizer:
     #we run CG once in sesop_freq iterations
     def __init__(self, experiments):
         self.sesop_runs = 0
-        self.dataset_size = experiments[0].getFlagValue('dataset_size')
-        self.batch_size = experiments[0].getFlagValue('b')
+        self.dataset_size = experiments[0].train_dataset_size
+        self.batch_size = experiments[0].bs
         self.models = []
         self.experiments = experiments
 
@@ -59,8 +58,8 @@ class SeboostOptimizer:
         bar.finish()
 
         self.losses = [m.loss() for m in self.models]
-        self.train_steps = [p.train_step for p in self.params.values()]
-
+        #self.train_steps = [p.train_step for p in self.params.values()]
+        self.train_steps = [m.train_op() for m in self.models]
         self.curr_iter = 1
 
     def run_epoch(self, sess):
@@ -80,8 +79,20 @@ class SeboostOptimizer:
 
 
     def run_iter(self, sess):
-        if self.curr_iter % self.params.values()[0].sgd_steps != 0:
-            _, losses = sess.run([self.train_steps, self.losses])
+        if self.curr_iter % self.params.values()[0].sgd_steps != 0:# or len(self.params.values()[0].cg_var_list) == 0:
+
+            feed = {}
+            for m in self.models:
+                feed.update(m.get_feed(sess, self.batch_size, True))
+
+            _, losses = sess.run([self.train_steps, self.losses], feed_dict=feed)
+
+            i = 0
+            for e in self.experiments:
+                for model_idx in range(len(e.models)):
+                    e.add_iteration_train_error(model_idx, losses[i])
+                    i += 1
+
             self.curr_iter += 1
             return None  # TODO: need to return loss per experiment here
 
@@ -89,14 +100,6 @@ class SeboostOptimizer:
 
     def run_sesop(self, sess):
 
-        #sess.run(self.models[0].get_batch_provider().set_batch_size_op(self.dataset_size))
-        #full_data, full_labels = sess.run(self.models[0].get_batch_provider().batch())
-
-
-        # Get batch for sesop:
-        sess.run(self.models[0].get_batch_provider().set_batch_size_op(self.params.values()[0].sesop_batch_size))
-        sesop_data, sesop_labels = sess.run(self.models[0].get_batch_provider().batch())
-        sess.run(self.models[0].get_batch_provider().set_batch_size_op(self.params.values()[0].batch_size))
 
         #loss per experiment
         losses = {}
@@ -120,17 +123,14 @@ class SeboostOptimizer:
             sess.run(b4_sesop)
 
             #Now optimize by alpha
-            feed_dict = {}
-            inputs, labels = master_model.get_inputs()
-            feed_dict[inputs] = sesop_data
-            feed_dict[labels] = sesop_labels
-
-            #master_model.dump_to_tensorboard(sess)
-            #master_model.dump_to_tensorboard(sess)
-            master_model.dump_to_tensorboard(sess)
 
             #loss_b4_sesop = sess.run(master_model.loss() ,feed_dict={inputs: full_data, labels: full_labels})
+            feed_dict = master_model.get_shared_feed(sess, self.params[master_model].sesop_batch_size, True)
+            assert (len(feed_dict) == 2 * len(e.models))
+
             self.params[master_model].cg.minimize(sess, feed_dict=feed_dict)
+            sess.run(after_sesop)
+
             #loss_after_sesop = sess.run(master_model.loss(), feed_dict={inputs: full_data, labels: full_labels})
 
 
@@ -139,23 +139,17 @@ class SeboostOptimizer:
             #master_model.log_loss_b4_minus_after(sess, loss_b4_sesop - loss_after_sesop)
 
 
-            master_model.dump_to_tensorboard(sess)
+            #master_model.dump_to_tensorboard(sess)
             #master_model.summary_mgr.writer.flush()
             #Update the history:
-            sess.run(after_sesop)
+
 
             #Now send the results back to the workers
             for worker in worker_models:
                 #TODO: worker.assert_have_no_alpa_or_history_or_replicas()
                 sess.run(worker.pull_from_master_op())
 
-            feed_dict = {}
-            for m in e.models:
-                inputs, labels = m.get_inputs()
-                feed_dict[inputs] = sesop_data
-                feed_dict[labels] = sesop_labels
 
-            assert(len(feed_dict) == 2*len(e.models))
             losses[e] = sess.run([m.loss() for m in e.models], feed_dict=feed_dict)
 
 
