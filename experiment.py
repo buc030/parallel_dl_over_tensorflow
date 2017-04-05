@@ -24,7 +24,8 @@ class Experiment:
         'model': 'simple',
         'hidden_layers_num': 1,
         'hidden_layers_size': 10,
-        'nodes': 1
+        'nodes': 1,
+        'optimizer': 'sgd'
         }
 
     FLAGS_OTHER_NAMES = {'b' : 'batch_size'}
@@ -36,6 +37,7 @@ class Experiment:
     def __setstate__(self, state):
         """Restore state from the unpickled state values."""
         self.flags, self.results = state
+        self.__init__(self.flags)
 
     #constructor!!
     def __init__(self, flags):
@@ -69,31 +71,6 @@ class Experiment:
     def __repr__(self):
         return str(self)
 
-    def init_batch_providers(self, sess):
-        self.batch_providers = []
-
-        for i in range(self.getFlagValue('nodes')):
-
-            if self.getFlagValue('model') == 'simple':
-                with tf.variable_scope('simple_batch_provider') as scope:
-                    self.batch_providers.append(
-                        SimpleBatchProvider(input_dim=self.input_dim, output_dim=self.output_dim, \
-                                            dataset_size=self.dataset_size, \
-                                            batch_sizes=[self.bs, self.sesop_batch_size]))
-                    scope.reuse_variables()
-
-            elif self.getFlagValue('model') == 'mnist':
-                assert (False)
-            elif self.getFlagValue('model') == 'cifar10':
-                with tf.variable_scope('cifar10_batch_provider') as scope:
-                    self.batch_providers.append(
-                        CifarBatchProvider(batch_sizes=[self.bs, self.sesop_batch_size, 1000]))
-
-                    #self.batch_providers[-1].start_prefetchers(sess)
-
-        return self.batch_providers
-
-
 
     def get_model_tensorboard_dir(self, model_idx):
         return ExperimentsManager.get().get_experiment_model_tensorboard_dir(self, model_idx)
@@ -103,8 +80,8 @@ class Experiment:
         return ExperimentsManager.get().get_experiment_model_checkpoint_dir(self, model_idx)
 
 
-    def init_models(self, gpu):
-        assert(len(self.batch_providers) == self.getFlagValue('nodes'))
+    def init_models(self, gpu, batch_providers):
+        assert(len(batch_providers) >= self.getFlagValue('nodes'))
         #build the models and connect it to batch_providers
         self.models = []
         self.results = []
@@ -114,11 +91,11 @@ class Experiment:
                     #experiment, batch_provider, node_id
                     model = None
                     if self.getFlagValue('model') == 'simple':
-                        model = SimpleModel(self, self.batch_providers[i], len(self.models))
+                        model = SimpleModel(self, batch_providers[i], len(self.models))
                     elif self.getFlagValue('model') == 'mnist':
-                        model = MnistModel(self, self.batch_providers[i], len(self.models))
+                        model = MnistModel(self, batch_providers[i], len(self.models))
                     elif self.getFlagValue('model') == 'cifar10':
-                        model = CifarModel(self, self.batch_providers[i], len(self.models))
+                        model = CifarModel(self, batch_providers[i], len(self.models))
 
                     assert(model is not None)
 
@@ -132,6 +109,18 @@ class Experiment:
             return self.flags[name]
         return Experiment.FLAGS_DEFAULTS[name]
 
+    def getDatasetSize(self):
+        if self.getFlagValue('model') == 'simple':
+            self.train_dataset_size = self.getFlagValue('dataset_size')
+            self.test_dataset_size = self.getFlagValue('dataset_size')
+        elif self.getFlagValue('model') == 'cifar10':
+            self.train_dataset_size = 50000
+            self.test_dataset_size = 10000
+        else:
+            assert (False)
+
+        return self.train_dataset_size, self.test_dataset_size
+
     def buildLabel(self):
         res = ''
         for flag_name in sorted(Experiment.FLAGS_DEFAULTS.keys()):
@@ -140,7 +129,17 @@ class Experiment:
 
     def get_number_of_ran_iterations(self):
         #TODO: assert that all models has same length
+        if len(self.results) == 0:
+            return 0
+
         return len(self.results[0].trainErrorPerItereation)
+
+    def get_number_of_ran_epochs(self):
+        # TODO: assert that all models has same length
+        if len(self.results) == 0:
+            return 0
+
+        return len(self.results[0].trainError)
 
     def add_iteration_train_error(self, model_idx, err):
         self.results[model_idx].trainErrorPerItereation.append(err)

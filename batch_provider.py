@@ -6,7 +6,9 @@ from dataset_manager import DatasetManager
 import cifar_input
 import Queue
 from threading import Thread
-
+import utils
+from tensorflow.python.ops import data_flow_ops
+from tf_utils import StackedBatches
 """
 Every subclass need to implment
         self.train_pipes = {}
@@ -14,66 +16,50 @@ Every subclass need to implment
 
 """
 class BatchProvider(object):
-
-    def get_queue_index(self, batch_size, is_training):
-        return self.b_train_to_index[(batch_size, is_training)]
-
-    def get_queue_by_index(self, index):
-        batch_size, is_training = self.index_to_b_train[index]
-        if is_training:
-            return self.train_pipes[batch_size]
-
-        return self.test_pipes[batch_size]
-
-    def get_queues(self):
-        return [self.get_queue_by_index(i) for i in range(len(self.batch_sizes)*2)]
-
-    def set_source(self, sess, batch_size, is_training):
-        # Have the que runner do nothing by setting batch_size = -1
-        sess.run(tf.assign(self.que_chooser, self.get_queue_index(batch_size, is_training)))
-
-
     def __init__(self, batch_sizes):
 
         self.batch_sizes = batch_sizes
-        #different solution:
-        self.b_train_to_index = {}
-        self.index_to_b_train = {}
-        i = 0
-        for b in batch_sizes:
-            self.b_train_to_index[(b, True)] = i
-            self.index_to_b_train[i] = (b, True)
-            i += 1
-            self.b_train_to_index[(b, False)] = i
-            self.index_to_b_train[i] = (b, False)
-            i += 1
 
-        self.que_chooser = tf.Variable(0, trainable=False, name='que_chooser')
-        print 'self.get_queues() = ' + str(self.get_queues()[0])
-        self._batch = tf.QueueBase.from_list(self.que_chooser, self.get_queues()).dequeue()
+        with tf.device('/cpu:' + str(0)):
+
+            self.set_source_ops = {}
+            for b in batch_sizes:
+                for val in [False, True]:
+                    self.set_source_ops[(b, val)] = [tf.assign(self.batch_size_chooser, b), tf.assign(self.is_train_chooser, val)]
+
+            cases = []
+            cases.append((tf.equal(self.is_train_chooser, False), lambda: self.train_pipe))
+            cases.append((tf.equal(self.is_train_chooser, True), lambda: self.train_pipe))
+            default = lambda: self.train_pipe
+
+            self._batch = tf.case(pred_fn_pairs=cases, default=default)
 
     def batch(self):
         return self._batch
 
-    def next_batch(self, sess, batch_size, is_train):
+    def set_source(self, sess, batch_size, is_training):
+        # Have the que runner do nothing by setting batch_size = -1
+        sess.run(self.set_source_ops[(batch_size, is_training)])
 
-        if is_train:
-            return sess.run(self.train_pipes[batch_size])
-
-        return sess.run(self.test_pipes[batch_size])
 
 
 class CifarBatchProvider(BatchProvider):
-    def __init__(self, batch_sizes):
+    def __init__(self, batch_sizes, train_threads_num_per_batchsize, test_threads_num_per_batchsize):
 
-        self.train_pipes = {}
-        self.test_pipes = {}
+        with tf.device('/cpu:' + str(0)):
 
-        for b in batch_sizes:
-            self.train_pipes[b] = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/data_batch*', b, 'train')
-            self.test_pipes[b] = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/test_batch.bin', b, 'test')
+            #dataset, data_path, test_path, batch_size, max_batch_size, is_training, num_threads
+            self.batch_size_chooser = tf.Variable(batch_sizes[0], trainable=False, name='batch_size_chooser')
+            self.is_train_chooser = tf.Variable(False, trainable=False, name='is_train_chooser')
 
-        super(CifarBatchProvider, self).__init__(batch_sizes)
+            self.train_pipe = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/data_batch*',\
+                'CIFAR_data/cifar-10-batches-bin/test_batch.bin',\
+                self.batch_size_chooser, max_batch_size=max(batch_sizes), is_training=self.is_train_chooser, num_threads=20)
+
+            #
+            # self.test_pipe = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/test_batch.bin', \
+            #                                           self.batch_size_chooser, max_batch_size=max(batch_sizes), mode='train', num_threads=1)
+            super(CifarBatchProvider, self).__init__(batch_sizes)
 
 
 
@@ -84,12 +70,7 @@ class SimpleBatchProvider(BatchProvider):
         input, label = tf.train.slice_input_producer([full_input, full_label], name='slicer', shuffle=True, seed=1)
         batched_input, batched_labels = tf.train.batch([input, label], batch_size=b, name='batcher', capacity=2*max(self.batch_sizes))
 
-
-        queue = tf.FIFOQueue(capacity=1, dtypes=tf.float32, name='staging_que')
-        enque_op = queue.enqueue([batched_input, batched_labels])
-        tf.train.add_queue_runner(tf.train.QueueRunner(queue, [enque_op] * 1))
-
-        return queue
+        return batched_input, batched_labels
 
 
     ##public

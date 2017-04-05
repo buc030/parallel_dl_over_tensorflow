@@ -11,7 +11,7 @@ import experiments_manager
 from summary_manager import SummaryManager
 from tf_utils import *
 
-
+import tqdm
 
 class SeboostOptimizerParams:
     def __init__(self, model):
@@ -37,7 +37,8 @@ class SeboostOptimizer:
     #we run CG once in sesop_freq iterations
     def __init__(self, experiments):
         self.sesop_runs = 0
-        self.dataset_size = experiments[0].train_dataset_size
+        self.dataset_size, _ = experiments[0].getDatasetSize()
+
         self.batch_size = experiments[0].bs
         self.models = []
         self.experiments = experiments
@@ -46,46 +47,36 @@ class SeboostOptimizer:
             for m in e.models:
                 self.models.append(m)
 
-
-        bar = progressbar.ProgressBar(maxval=len(self.models), \
-                                      widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage()])
-
-        bar.start()
         self.params = {}
-        for m in self.models:
+        for m in tqdm.tqdm(self.models):
             self.params[m] = SeboostOptimizerParams(m)
-            bar.update(len(self.params))
-        bar.finish()
+
 
         self.losses = [m.loss() for m in self.models]
         #self.train_steps = [p.train_step for p in self.params.values()]
-        self.train_steps = [m.train_op() for m in self.models]
+        self.train_steps = []
+        for m in self.models:
+            self.train_steps.extend(m.train_op())
+
+        print 'self.train_steps = ' + str(self.train_steps)
         self.curr_iter = 1
 
-    def run_epoch(self, sess):
+    def run_epoch(self, sess, stages):
 
-        bar = progressbar.ProgressBar(maxval=self.dataset_size/self.batch_size, \
-                                      widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage(), progressbar.ETA()])
-        bar.start()
+        for m in self.models:
+            m.batch_provider.set_source(sess, self.batch_size, True)
 
-        for i in range(self.dataset_size/self.batch_size):
 
-            self.run_iter(sess)
-            bar.update(i + 1)
+        for i in tqdm.tqdm(range(self.dataset_size/self.batch_size)):
+            self.run_iter(sess, stages)
 
-        bar.finish()
 
         print 'Actual sesop freq is: ' + str(float(self.sesop_runs + 1) / (self.curr_iter + 1))
 
 
-    def run_iter(self, sess):
+    def run_iter(self, sess, stages):
         if self.curr_iter % self.params.values()[0].sgd_steps != 0:# or len(self.params.values()[0].cg_var_list) == 0:
-
-            feed = {}
-            for m in self.models:
-                feed.update(m.get_feed(sess, self.batch_size, True))
-
-            _, losses = sess.run([self.train_steps, self.losses], feed_dict=feed)
+            _, losses, __ = sess.run([self.train_steps, self.losses, stages])
 
             i = 0
             for e in self.experiments:

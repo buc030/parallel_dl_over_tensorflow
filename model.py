@@ -4,7 +4,9 @@ from summary_manager import SummaryManager
 from h_var import HVar
 from experiments_manager import ExperimentsManager
 
+import utils
 from utils import check_create_dir
+from tensorflow.python.ops import data_flow_ops
 
 class FCLayer:
     def __init__(self, input, n_in, n_out, model, prefix):
@@ -85,22 +87,22 @@ class Model(object):
             return b4_sesop, after_sesop
 
     def dump_checkpoint(self, sess):
+        path = self.experiment.get_model_checkpoint_dir(self.node_id)
         if self.saver is None:
-            path = self.experiment.get_model_checkpoint_dir(self.node_id)
+
             check_create_dir(path)
             self.saver = tf.train.Saver(self.hvar_mgr.all_trainable_alphas() + self.hvar_mgr.all_trainable_weights())
 
         self.saver.save(sess, path + '/model.save', global_step=None)
 
     def init_from_checkpoint(self, sess):
+        path = self.experiment.get_model_checkpoint_dir(self.node_id)
         if self.saver is None:
-            path = self.experiment.get_model_checkpoint_dir(self.node_id)
             self.saver = tf.train.Saver(self.hvar_mgr.all_trainable_alphas() + self.hvar_mgr.all_trainable_weights())
+
+
         self.saver.restore(sess, path)
 
-    def get_feed(self, sess, batch_size, is_train):
-        x,y = self.batch_provider.next_batch(sess, batch_size, is_train)
-        return {self.input: x, self.label: y}
 
     #self dontate a batch to be used by all.
     def get_shared_feed(self, sess, batch_size, is_train, models):
@@ -136,14 +138,23 @@ class Model(object):
         self.i = 0
         self.j = 0
 
-        self.input = tf.placeholder(dtype=tf.float32, name='input_placeholder')
-        self.label = tf.placeholder(dtype=tf.float32, name='output_placeholder')
+        #self.input = tf.placeholder(dtype=tf.float32, name='input_placeholder')
+        #self.label = tf.placeholder(dtype=tf.float32, name='output_placeholder')
+
+        utils.printInfo(' self.batch_provider.batch() = ' + str( self.batch_provider.batch()))
+
+        #Use stageing area:
+        stager = data_flow_ops.StagingArea([tf.float32, tf.float32])
+        self.stage = stager.put(self.batch_provider.batch())
+        self.input, self.label = stager.get() #self.batch_provider.batch()
+        #self.input, self.label = self.batch_provider.batch()
+
 
         # if not (self.experiment.getFlagValue('hSize') == 0 ) and self.node_id == 0:
         #     #print 'experiment = ' + str(experiment)
         #     self.mergered_summeries = self.summary_mgr.merge_iters()
 
-        print 'Dumping into tensorboard ' + str(self.tensorboard_dir)
+        utils.printInfo('Dumping into tensorboard ' + str(self.tensorboard_dir))
 
     def log_loss_b4_minus_after(self, sess, loss_b4_minus_after):
         s = sess.run(self.loss_b4_minus_after, {self.loss_placeholder: loss_b4_minus_after})
@@ -260,10 +271,10 @@ class MnistModel(Model):
 class CifarModel(Model):
 
     def accuracy(self):
-        return self.model.accuracy
+        return self.model._accuracy
 
     def train_op(self):
-        return self.model.train_op
+        return [self.model.train_op]
 
     def __init__(self, experiment, batch_provider, node_id):
         super(CifarModel, self).__init__(experiment, batch_provider, node_id)
@@ -299,10 +310,14 @@ class CifarModel(Model):
                       use_bottleneck=False,
                       weight_decay_rate=0.0002,
                       relu_leakiness=0.1,
-                      optimizer='sgd')
+                      optimizer=self.experiment.getFlagValue('optimizer'))
 
         self.model = ResNet(hps, self.input, self.label, 'train', 3, get_variable, self.hvar_mgr)
         self.model._build_model()
+
+        #self.model._extra_train_ops.append(self.stage)
         self.model._build_train_op()
 
         self._loss = self.model.cost
+        self.model._accuracy = self.model.accuracy #tf.group(*[self.model.accuracy, self.stage])
+

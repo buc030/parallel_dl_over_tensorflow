@@ -4,6 +4,8 @@
 import pickle
 import os
 
+import utils
+
 #Manage the whereabout of the data of the experiments
 class ExperimentsManager:
     BASE_PATH = '/tmp/generated_data/ExperimentsManager/'
@@ -83,7 +85,7 @@ class ExperimentsManager:
         if path == None:
             path = self.allocate_experiment(experiment)
 
-        print 'Dumping into ' + str(path)
+        utils.printInfo('Dumping into ' + str(path))
         with open(path, 'wb') as f:
             return pickle.dump(experiment, f)
 
@@ -93,7 +95,8 @@ class ExperimentsManager:
         path = self.lookup_experiment_path(experiment)
         if path is None:
             return None
-        print 'Loading from ' + str(path)
+
+        utils.printInfo( 'Loading from ' + str(path))
         with open(path, 'rb') as f:
             res = pickle.load(f)
             #experiment.results = res.results
