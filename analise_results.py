@@ -5,8 +5,8 @@ import experiment
 import experiment_results
 import experiments_manager
 
-from experiment_runner import find_cifar_baseline, find_cifar_history
-
+#from experiment_runner import find_cifar_baseline, find_cifar_history
+import experiment_runner
 def display_results(experiments):
 
     loaded_experiments = {}
@@ -35,5 +35,5 @@ def display_results(experiments):
     plt.show()
 
 
-experiments = find_cifar_baseline()
+experiments = experiment_runner.find_cifar_baseline()
 display_results(experiments)

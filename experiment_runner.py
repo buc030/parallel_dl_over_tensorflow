@@ -247,6 +247,7 @@ def find_cifar_baseline():
     experiments = {}
     #for lr in [0.4, 0.3, 0.2, 0.1, 0.05, 0.025, 0.025/2]:
     for lr in [0.2, 0.1, 0.05, 0.025]:
+    #for lr in [0.4, 0.5, 0.6, 0.7]:
         experiments[len(experiments)] = experiment.Experiment(
             {
                 'model': 'cifar10',
