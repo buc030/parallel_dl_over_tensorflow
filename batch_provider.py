@@ -54,7 +54,7 @@ class CifarBatchProvider(BatchProvider):
 
             self.train_pipe = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/data_batch*',\
                 'CIFAR_data/cifar-10-batches-bin/test_batch.bin',\
-                self.batch_size_chooser, max_batch_size=max(batch_sizes), is_training=self.is_train_chooser, num_threads=20)
+                self.batch_size_chooser, max_batch_size=max(batch_sizes), is_training=self.is_train_chooser, num_threads=16)
 
             #
             # self.test_pipe = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/test_batch.bin', \
