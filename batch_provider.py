@@ -20,19 +20,13 @@ class BatchProvider(object):
 
         self.batch_sizes = batch_sizes
 
-        with tf.device('/cpu:' + str(0)):
 
-            self.set_source_ops = {}
-            for b in batch_sizes:
-                for val in [False, True]:
-                    self.set_source_ops[(b, val)] = [tf.assign(self.batch_size_chooser, b), tf.assign(self.is_train_chooser, val)]
+        self.set_source_ops = {}
+        for b in batch_sizes:
+            for val in [False, True]:
+                self.set_source_ops[(b, val)] = [tf.assign(self.batch_size_chooser, b), tf.assign(self.is_train_chooser, val)]
 
-            cases = []
-            cases.append((tf.equal(self.is_train_chooser, False), lambda: self.train_pipe))
-            cases.append((tf.equal(self.is_train_chooser, True), lambda: self.train_pipe))
-            default = lambda: self.train_pipe
-
-            self._batch = tf.case(pred_fn_pairs=cases, default=default)
+        self._batch = self.train_pipe
 
     def batch(self):
         return self._batch
@@ -44,22 +38,22 @@ class BatchProvider(object):
 
 
 class CifarBatchProvider(BatchProvider):
-    def __init__(self, batch_sizes, train_threads_num_per_batchsize, test_threads_num_per_batchsize):
+    def __init__(self, batch_sizes, train_threads):
 
-        with tf.device('/cpu:' + str(0)):
 
-            #dataset, data_path, test_path, batch_size, max_batch_size, is_training, num_threads
-            self.batch_size_chooser = tf.Variable(batch_sizes[0], trainable=False, name='batch_size_chooser')
-            self.is_train_chooser = tf.Variable(False, trainable=False, name='is_train_chooser')
 
-            self.train_pipe = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/data_batch*',\
+        #dataset, data_path, test_path, batch_size, max_batch_size, is_training, num_threads
+        self.batch_size_chooser = tf.Variable(batch_sizes[0], trainable=False, name='batch_size_chooser')
+        self.is_train_chooser = tf.Variable(False, trainable=False, name='is_train_chooser')
+
+        self.train_pipe = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/data_batch*',\
                 'CIFAR_data/cifar-10-batches-bin/test_batch.bin',\
-                self.batch_size_chooser, max_batch_size=max(batch_sizes), is_training=self.is_train_chooser, num_threads=16)
+                self.batch_size_chooser, max_batch_size=max(batch_sizes), is_training=self.is_train_chooser, num_threads=train_threads)
 
-            #
-            # self.test_pipe = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/test_batch.bin', \
-            #                                           self.batch_size_chooser, max_batch_size=max(batch_sizes), mode='train', num_threads=1)
-            super(CifarBatchProvider, self).__init__(batch_sizes)
+        #
+        # self.test_pipe = cifar_input.build_input('cifar10', 'CIFAR_data/cifar-10-batches-bin/test_batch.bin', \
+        #                                           self.batch_size_chooser, max_batch_size=max(batch_sizes), mode='train', num_threads=1)
+        super(CifarBatchProvider, self).__init__(batch_sizes)
 
 
 

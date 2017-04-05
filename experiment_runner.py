@@ -59,7 +59,7 @@ class ExperimentRunner:
 
         self.batch_size = experiments[0].getFlagValue('b')
         self.sesop_batch_size = experiments[0].getFlagValue('sesop_batch_size')
-        self.careless_batch_size = self.batch_size
+        self.careless_batch_size = 1000
 
         self.train_dataset_size, self.test_dataset_size = experiments[0].getDatasetSize()
 
@@ -103,22 +103,22 @@ class ExperimentRunner:
 
         #Every node needs to have a different batch provider to make sure they see diff data
         for i in range(max_nodes):
-            if model == 'simple':
-                with tf.variable_scope('simple_batch_provider_' + str(i)) as scope:
-                    self.batch_providers.append(
-                        SimpleBatchProvider(input_dim=self.input_dim, output_dim=self.output_dim, \
-                                            dataset_size=self.dataset_size, \
-                                            batch_sizes=[self.bs, self.sesop_batch_size]))
-                    scope.reuse_variables()
+            with tf.device('/cpu:' + str(i%12)):
+                if model == 'simple':
+                    with tf.variable_scope('simple_batch_provider_' + str(i)) as scope:
+                        self.batch_providers.append(
+                            SimpleBatchProvider(input_dim=self.input_dim, output_dim=self.output_dim, \
+                                                dataset_size=self.dataset_size, \
+                                                batch_sizes=[self.bs, self.sesop_batch_size]))
+                        scope.reuse_variables()
 
-            elif model == 'mnist':
-                assert (False)
-            elif model == 'cifar10':
-                with tf.variable_scope('cifar10_batch_provider_' + str(i)) as scope:
-                    self.batch_providers.append(
-                        CifarBatchProvider(batch_sizes=[self.bs, self.careless_batch_size],\
-                                           train_threads_num_per_batchsize=[16*len(self.experiments), len(self.experiments)],
-                                           test_threads_num_per_batchsize=[1, len(self.experiments)]))
+                elif model == 'mnist':
+                    assert (False)
+                elif model == 'cifar10':
+                    with tf.variable_scope('cifar10_batch_provider_' + str(i)) as scope:
+                        self.batch_providers.append(
+                            CifarBatchProvider(batch_sizes=[self.bs, self.sesop_batch_size, self.careless_batch_size], \
+                                               train_threads=4*len(self.experiments)))
 
         return self.batch_providers
 
@@ -246,7 +246,7 @@ import experiment
 def find_cifar_baseline():
     experiments = {}
     #for lr in [0.4, 0.3, 0.2, 0.1, 0.05, 0.025, 0.025/2]:
-    for lr in [0.2]:
+    for lr in [0.2, 0.1, 0.05, 0.025]:
         experiments[len(experiments)] = experiment.Experiment(
             {
                 'model': 'cifar10',
