@@ -211,9 +211,9 @@ class ExperimentRunner:
                 #assert (self.test_dataset_size % self.careless_batch_size == 0)
                 for m in models:
                     m.batch_provider.set_source(sess, self.careless_batch_size, True)
-                for i in tqdm.tqdm(range(self.train_dataset_size / self.careless_batch_size)):
+                for i in tqdm.tqdm(range((self.train_dataset_size/5) / self.careless_batch_size)):
                     train_error +=  np.array(sess.run(accuracies + stages)[:len(accuracies)])
-                train_error /= float(self.train_dataset_size / self.careless_batch_size)
+                train_error /= float((self.train_dataset_size/5) / self.careless_batch_size)
                 print 'Train Accuracy = ' + str(train_error)
 
                 for m in models:
@@ -246,11 +246,12 @@ import experiment
 def find_cifar_baseline():
     experiments = {}
     #for lr in [0.4, 0.3, 0.2, 0.1, 0.05, 0.025, 0.025/2]:
-#    for lr in [0.2, 0.1, 0.05, 0.025]:
+    #for lr in [0.2, 0.1, 0.05, 0.025]:
+    for lr in [0.2, 0.1, 0.05, 0.025]:
     #for lr in [0.3, 0.4, 0.5, 0.6]:
     #for lr in [0.7, 0.8, 0.9, 1.0]:
     #for lr in [1.1, 1.2, 1.3, 1.4]:
-    for lr in [0.8]:
+    #for lr in [0.8]:
         experiments[len(experiments)] = experiment.Experiment(
             {
                 'model': 'cifar10',

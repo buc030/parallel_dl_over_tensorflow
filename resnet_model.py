@@ -89,8 +89,8 @@ class ResNet(object):
       # It is more memory efficient than very deep residual network and has
       # comparably good performance.
       # https://arxiv.org/pdf/1605.07146v1.pdf
-      # filters = [16, 160, 320, 640]
-      # Update hps.num_residual_units to 9
+      filters = [16, 160, 320, 640]
+      #Update hps.num_residual_units to 9
 
     with tf.variable_scope('unit_1_0'):
       x = res_func(x, filters[0], filters[1], self._stride_arr(strides[0]),
@@ -164,14 +164,17 @@ class ResNet(object):
         zip(grads, trainable_variables),
         global_step=self.global_step, name='train_step')
 
-    train_ops = [apply_op] + self._extra_train_ops
+    train_ops = [apply_op] + self._extra_train_ops + [tf.Print(self.lrn_rate, [self.global_step, self.lrn_rate], message='[global_step][lr] = ')]
     self.train_op = tf.group(*train_ops)
 
   # TODO(xpan): Consider batch_norm in contrib/layers/python/layers/layers.py
   def _batch_norm(self, name, x):
     """Batch normalization."""
     with tf.variable_scope(name):
+      shape = x.get_shape()
       params_shape = [x.get_shape()[-1]]
+
+      #print 'shape = ' + str(shape)
 
       beta = self.get_variable_func(
           'beta', params_shape, tf.float32,
@@ -181,6 +184,7 @@ class ResNet(object):
           initializer=tf.constant_initializer(1.0, tf.float32))
 
       if self.mode == 'train':
+        #x, axes, shift=None, name=None, keep_dims=False
         mean, variance = tf.nn.moments(x, [0, 1, 2], name='moments')
 
         moving_mean = tf.get_variable(
@@ -192,6 +196,7 @@ class ResNet(object):
             initializer=tf.constant_initializer(1.0, tf.float32),
             trainable=False)
 
+        #print 'variance = ' + str(variance) + ' , moving_variance = ' + str(moving_variance)
         #TODO: load these from checkpoint.
         #TODO: Try to hold history for these too and optimize by their alpha?
 

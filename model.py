@@ -306,7 +306,7 @@ class CifarModel(Model):
                       num_classes=10,
                       min_lrn_rate=0.0001,
                       lrn_rate=self.experiment.getFlagValue('lr'),
-                      num_residual_units=5,
+                      num_residual_units=9,
                       use_bottleneck=False,
                       weight_decay_rate=0.0002,
                       relu_leakiness=0.1,
