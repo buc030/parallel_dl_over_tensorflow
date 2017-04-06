@@ -59,7 +59,7 @@ class ExperimentRunner:
 
         self.batch_size = experiments[0].getFlagValue('b')
         self.sesop_batch_size = experiments[0].getFlagValue('sesop_batch_size')
-        self.careless_batch_size = 1000
+        self.careless_batch_size = 250
 
         self.train_dataset_size, self.test_dataset_size = experiments[0].getDatasetSize()
 
@@ -185,7 +185,7 @@ class ExperimentRunner:
             coord = tf.train.Coordinator()
             threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
-            print 'epochs num = ' + str(self.experiments[0].get_number_of_ran_epochs() )
+            print 'Pre-staging...'
             for e in tqdm.tqdm(self.experiments):
                 for m in e.models:
                     sess.run(m.stage)
@@ -211,9 +211,9 @@ class ExperimentRunner:
                 #assert (self.test_dataset_size % self.careless_batch_size == 0)
                 for m in models:
                     m.batch_provider.set_source(sess, self.careless_batch_size, True)
-                for i in tqdm.tqdm(range((self.train_dataset_size/5) / self.careless_batch_size)):
+                for i in tqdm.tqdm(range((self.train_dataset_size/20) / self.careless_batch_size)):
                     train_error +=  np.array(sess.run(accuracies + stages)[:len(accuracies)])
-                train_error /= float((self.train_dataset_size/5) / self.careless_batch_size)
+                train_error /= float((self.train_dataset_size/20) / self.careless_batch_size)
                 print 'Train Accuracy = ' + str(train_error)
 
                 for m in models:
