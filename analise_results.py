@@ -15,6 +15,7 @@ def display_results(experiments):
         loaded_experiments[i] = experiments_manager.ExperimentsManager.get().load_experiment(e)
         i += 1
 
+    print str(loaded_experiments[0].results)
     comperator = experiment_results.ExperimentComperator(loaded_experiments)
 
     comperator.compare(group_by='b', error_type='test')

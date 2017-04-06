@@ -7,12 +7,15 @@ import os
 import utils
 
 #Manage the whereabout of the data of the experiments
-class ExperimentsManager:
+
+class ExperimentsManager(object):
+    __metaclass__ = utils.Singleton
+
     BASE_PATH = '/tmp/generated_data/ExperimentsManager/'
     METADATA_FILE = BASE_PATH + 'metadata'
     TENSOR_BOARD_DIRS = BASE_PATH + 'TensorBoard/'
     MODEL_CHECKPOINT_DIRS = BASE_PATH + 'ModelCheckpoints/'
-    inst = None
+
 
     def __init__(self):
         #self.running = None
@@ -34,10 +37,18 @@ class ExperimentsManager:
     def refresh_metadata(self):
         try:
             with open(ExperimentsManager.METADATA_FILE, 'rb') as f:
-                self.metadata.update(pickle.load(f))
+                loaded_metadata = pickle.load(f)
+                self.metadata.update(loaded_metadata)
         except:
+            raise
             print ExperimentsManager.METADATA_FILE + ' does not exist yet, programmer should uncomment the line that creates it'
             self.dunp_metadata()
+            try:
+                with open(ExperimentsManager.METADATA_FILE, 'rb') as f:
+                    self.metadata.update(pickle.load(f))
+            except:
+                assert(False)
+
 
 
     def dunp_metadata(self):
@@ -57,20 +68,22 @@ class ExperimentsManager:
 
     #params is a dictionary from flag names to values
     def allocate_experiment(self, experiment):
+        print '############### New experiment allocating path ################'
+
         #assert that the experiment does not exists yet
         assert(self.lookup_experiment_path(experiment) == None)
         self.metadata[experiment] = self.find_free_index()
         self.dunp_metadata()
+
+        print self.lookup_experiment_path(experiment)
         return self.lookup_experiment_path(experiment)
 
 
     ######################   API   ############################:
-
     @classmethod
     def get(cls):
-        if ExperimentsManager.inst is None:
-            ExperimentsManager.inst = ExperimentsManager()
-        return ExperimentsManager.inst
+        return ExperimentsManager()
+
 
     def get_experiment_model_tensorboard_dir(self, experiment, model_idx):
         self.dump_experiment(experiment)
@@ -94,6 +107,7 @@ class ExperimentsManager:
     def load_experiment(self, experiment):
         path = self.lookup_experiment_path(experiment)
         if path is None:
+            #assert(False)
             return None
 
         utils.printInfo( 'Loading from ' + str(path))

@@ -32,7 +32,7 @@ class ExperimentRunner:
         for e in experiments:
             _e = experiments_manager.ExperimentsManager.get().load_experiment(e)
             if _e is not None:
-                if force_rerun == False and _e.get_number_of_ran_iterations() > 0:
+                if force_rerun == False and (_e.get_number_of_ran_iterations() > 0 or _e.get_number_of_ran_epochs() > 0):
                     if len(_e.results[0].trainError) >= _e.getFlagValue('epochs'):
                         print 'Experiment ' + str(_e) + ' already ran!'
                     else:
@@ -154,15 +154,12 @@ class ExperimentRunner:
 
             self.init_batch_providers(sess)
 
-
             for e in tqdm.tqdm(self.experiments):
             #for e in self.experiments:
                 with tf.variable_scope('experiment_' + str(expr_num)):
                     e.init_models(i%4, self.batch_providers)
                 i += 1
                 expr_num += 1
-
-
 
 
             print 'Setting up optimizers'
@@ -188,6 +185,7 @@ class ExperimentRunner:
             coord = tf.train.Coordinator()
             threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
+            print 'epochs num = ' + str(self.experiments[0].get_number_of_ran_epochs() )
             for e in tqdm.tqdm(self.experiments):
                 for m in e.models:
                     sess.run(m.stage)
@@ -197,13 +195,14 @@ class ExperimentRunner:
             writer.add_graph(sess.graph)
             #self.epochs = 0
             # Progress bar:
+
             for epoch in range(self.epochs):
 
                 print 'Setup losses'
                 models, _, accuracies, stages = self.remove_finished_experiments()
 
                 # run 20 steps (full batch optimization to start with)
-                print 'epoch #' + str([e.get_number_of_ran_epochs() for e in self.experiments])
+
                 print 'Computing train and test Accuracy'
                 train_error, test_error = np.zeros(len(models)), np.zeros(len(models))
 
@@ -230,6 +229,7 @@ class ExperimentRunner:
                 for m in tqdm.tqdm(models):
                     m.dump_checkpoint(sess)
 
+                print 'Start training Epoch #' + str([e.get_number_of_ran_epochs() for e in self.experiments])
                 print 'Training'
                 optimizer.run_epoch(sess=sess, stages=stages)
 
@@ -246,8 +246,11 @@ import experiment
 def find_cifar_baseline():
     experiments = {}
     #for lr in [0.4, 0.3, 0.2, 0.1, 0.05, 0.025, 0.025/2]:
-    for lr in [0.2, 0.1, 0.05, 0.025]:
-    #for lr in [0.4, 0.5, 0.6, 0.7]:
+#    for lr in [0.2, 0.1, 0.05, 0.025]:
+    #for lr in [0.3, 0.4, 0.5, 0.6]:
+    #for lr in [0.7, 0.8, 0.9, 1.0]:
+    #for lr in [1.1, 1.2, 1.3, 1.4]:
+    for lr in [0.8]:
         experiments[len(experiments)] = experiment.Experiment(
             {
                 'model': 'cifar10',
@@ -256,7 +259,7 @@ def find_cifar_baseline():
                 'sesop_batch_size': 1000,
                 'sesop_freq': (1.0 / 50000.0),  # sesop every 1 epochs (no sesop)
                 'hSize': 0,
-                'epochs': 250,
+                'epochs': 100,
                 # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
                 'nodes': 1,
 

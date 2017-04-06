@@ -36,14 +36,17 @@ class Experiment:
 
     def __setstate__(self, state):
         """Restore state from the unpickled state values."""
-        self.flags, self.results = state
-        self.__init__(self.flags)
+        flags, results = state
+        self.__init__(flags)
+        self.results = results
 
     #constructor!!
     def __init__(self, flags):
         self.flags = flags
 
         self.bs, self.sesop_batch_size = flags['b'], flags['sesop_batch_size']
+        self.models = []
+        self.results = []
 
         if self.getFlagValue('model') == 'simple':
             self.train_dataset_size = 5000
@@ -83,8 +86,6 @@ class Experiment:
     def init_models(self, gpu, batch_providers):
         assert(len(batch_providers) >= self.getFlagValue('nodes'))
         #build the models and connect it to batch_providers
-        self.models = []
-        self.results = []
         with tf.device('/gpu:' + str(gpu % 4)):
             with tf.variable_scope("experiment_models") as scope:
                 for i in range(self.getFlagValue('nodes')):
@@ -136,10 +137,10 @@ class Experiment:
 
     def get_number_of_ran_epochs(self):
         # TODO: assert that all models has same length
-        if len(self.results) == 0:
+        if len(self.results) == 0 or len(self.results[0].trainError) == 0:
             return 0
 
-        return len(self.results[0].trainError)
+        return len(self.results[0].trainError) - 1
 
     def add_iteration_train_error(self, model_idx, err):
         self.results[model_idx].trainErrorPerItereation.append(err)
