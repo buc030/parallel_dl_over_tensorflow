@@ -90,7 +90,7 @@ class ResNet(object):
       # comparably good performance.
       # https://arxiv.org/pdf/1605.07146v1.pdf
       filters = [16, 160, 320, 640]
-      #Update hps.num_residual_units to 9
+      #Update hps.num_residual_units to 9 (or 4???)
 
     with tf.variable_scope('unit_1_0'):
       x = res_func(x, filters[0], filters[1], self._stride_arr(strides[0]),
@@ -164,7 +164,7 @@ class ResNet(object):
         zip(grads, trainable_variables),
         global_step=self.global_step, name='train_step')
 
-    train_ops = [apply_op] + self._extra_train_ops + [tf.Print(self.lrn_rate, [self.global_step, self.lrn_rate], message='[global_step][lr] = ')]
+    train_ops = [apply_op] + self._extra_train_ops #+ [tf.Print(self.lrn_rate, [self.global_step, self.lrn_rate], message='[global_step][lr] = ')]
     self.train_op = tf.group(*train_ops)
 
   # TODO(xpan): Consider batch_norm in contrib/layers/python/layers/layers.py
@@ -292,7 +292,8 @@ class ResNet(object):
   def _decay(self):
     """L2 weight decay loss."""
     costs = []
-    for var in tf.trainable_variables():
+    trainable_variables = self.hvar_mgr.all_trainable_weights()
+    for var in trainable_variables:
       if var.op.name.find(r'DW') > 0:
         costs.append(tf.nn.l2_loss(var))
         # tf.summary.histogram(var.op.name, var)

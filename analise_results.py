@@ -6,7 +6,7 @@ import experiment_results
 import experiments_manager
 
 #from experiment_runner import find_cifar_baseline, find_cifar_history
-import experiment_runner
+from experiment_runner import find_cifar_baseline
 def display_results(experiments):
 
     loaded_experiments = {}
@@ -17,7 +17,8 @@ def display_results(experiments):
 
     print str(loaded_experiments[0].results)
     comperator = experiment_results.ExperimentComperator(loaded_experiments)
-
+    comperator.compare(group_by='b', error_type='trainPerIteration')
+    plt.show()
     comperator.compare(group_by='b', error_type='test')
     plt.show()
     comperator.compare(group_by='b', error_type='train')
@@ -36,5 +37,5 @@ def display_results(experiments):
     plt.show()
 
 
-experiments = experiment_runner.find_cifar_baseline()
+experiments = find_cifar_baseline()
 display_results(experiments)

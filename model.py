@@ -293,6 +293,7 @@ class CifarModel(Model):
                  validate_shape=True,
                  custom_getter=None):
 
+            #+ '_node_' + str(self.node_id)
             var = tf.get_variable(name, shape, dtype, initializer, regularizer, trainable, collections, caching_device,
                             partitioner, validate_shape, custom_getter)
             h_var = self.hvar_mgr.create_var(var)
@@ -306,7 +307,7 @@ class CifarModel(Model):
                       num_classes=10,
                       min_lrn_rate=0.0001,
                       lrn_rate=self.experiment.getFlagValue('lr'),
-                      num_residual_units=9,
+                      num_residual_units=self.experiment.getFlagValue('num_residual_units'),
                       use_bottleneck=False,
                       weight_decay_rate=0.0002,
                       relu_leakiness=0.1,

@@ -25,6 +25,9 @@ class HVar:
         self.var = var
         self.model = model
 
+        print 'var.name = ' + str(var.name)
+        print 'self.name = ' + str(self.name)
+
         with tf.variable_scope(self.name):
             self.sub_init(var)
 
@@ -34,7 +37,6 @@ class HVar:
         self.node_id = self.model.node_id
 
         self.var = var
-
         self.history = []
         self.history_aplha = []
 
@@ -44,7 +46,8 @@ class HVar:
         self.next_idx = 0
         self.op_cache = {}
         self.o = None
-
+        if self.model.experiment.getFlagValue('nodes') == 1 and self.model.experiment.getFlagValue('hSize') == 0:
+            return
 
         with tf.name_scope(self.name + '_subspace'):
             # snapshot is taken after each sesop. after a sesop, the snapshot will contain the value after sesop ran.

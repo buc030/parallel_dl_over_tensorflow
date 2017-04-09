@@ -51,6 +51,16 @@ class ExperimentResults:
     def getBestTestError(self):
         return min([1 - l for l in self.testError if l > 0])
 
+    def plotTrainErrorPerIteration(self, flag_names_to_use_in_label=None):
+        plt.title('Train Error')
+        plt.xlabel('Epochs')
+        plt.ylabel('Error')
+        full_label = 'train(' + self.label + ')'
+        if flag_names_to_use_in_label is not None:
+            full_label = self.buildLabel(flag_names_to_use_in_label)
+        plt.plot(range(len(self.trainErrorPerItereation)), self.trainErrorPerItereation, '-', label=full_label)
+        plt.legend()
+
     def plotTrainError(self, l=(0, 100), flag_names_to_use_in_label=None):
         plt.title('Train Error')
         plt.xlabel('Epochs')
@@ -313,6 +323,8 @@ class ExperimentComperator:
                 #On the label, show the group_by value, and the diff values
                 if error_type == 'test':
                     expr.results[node_id].plotTestError((0,100), diff + [group_by])
+                elif error_type == 'trainPerIteration':
+                    expr.results[node_id].plotTrainErrorPerIteration(diff + [group_by])
                 else:
                     expr.results[node_id].plotTrainError((0,100), diff + [group_by])
             #plt.legend(loc='center left', bbox_to_anchor=(0.4, 1))
@@ -335,6 +347,7 @@ class ExperimentComperator:
         nextLegendHeight = 1
         #for each value that apeared, we take all the experiments
         cycler = ColorCycle()
+        all_rects = []
         for val in apeared_values.keys():
             expreiments = apeared_values[val]
             diff = experiment_diff(expreiments)
@@ -344,6 +357,7 @@ class ExperimentComperator:
             for expr in expreiments:
                 final_label = expr.results[node_id].buildLabel(diff + [group_by])
                 if error_type == 'test':
+                    print 'expr.results[node_id].getBestTestError() = ' + str(1 - expr.results[node_id].getBestTestError())
                     rect = ax.bar(pos, expr.results[node_id].getBestTestError(), width,\
                               color=cycler.get())
                 else:
@@ -354,12 +368,27 @@ class ExperimentComperator:
                 labels.append(final_label)
                 pos += width
 
+            all_rects.extend(rects)
             fontP = FontProperties()
             fontP.set_size('small')
             #plt.legend("title", prop=fontP)
             fig.gca().add_artist(ax.legend(rects, labels, loc=1, bbox_to_anchor=(1, nextLegendHeight), prop=fontP))
             nextLegendHeight -= 0.1
             pos += 1
+
+        def autolabel(all_rects):
+            """
+            Attach a text label above each bar displaying its height
+            """
+            for rects in all_rects:
+                for rect in rects:
+                    height = rect.get_height()
+                    #print 'rect = ' + str(dir(rect))
+                    ax.text(rect.get_x() + rect.get_width() / 2., 1.05 * height,
+                            '%d' % int(height),
+                            ha='center', va='bottom')
+
+        autolabel(all_rects)
         #plt.legend()
         #plt.xscale('log')
         plt.title('Best error after 100 epochs')

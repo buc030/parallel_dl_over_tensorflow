@@ -11,7 +11,7 @@ from experiments_manager import ExperimentsManager
 #store the results
 class Experiment:
     FLAGS_DEFAULTS = \
-        {
+    {
         'b': 100,
         'sesop_batch_size': 200,
         'sesop_freq': float(1) / 100,
@@ -25,10 +25,38 @@ class Experiment:
         'hidden_layers_num': 1,
         'hidden_layers_size': 10,
         'nodes': 1,
-        'optimizer': 'sgd'
-        }
+        'optimizer': 'sgd',
+        'num_residual_units': 9,
+        'fixed_dropout_during_sesop': False,
+        'fixed_bn_during_sesop': False
+    }
 
-    FLAGS_OTHER_NAMES = {'b' : 'batch_size'}
+    FLAGS_ALIASES = {'batch_size' : 'b'}
+
+    def getCanonicalName(self, name):
+        if name not in Experiment.FLAGS_ALIASES:
+            return name
+        return Experiment.FLAGS_ALIASES[name]
+
+
+    def getFlagValue(self, name):
+        name = self.getCanonicalName(name)
+        if name in self.flags.keys():
+            return self.flags[name]
+        return Experiment.FLAGS_DEFAULTS[name]
+
+    #if I added a flag after the run took place, but i put the flag value of the run as defualt,
+    #then when loading the run, we will load it without that flag, but when we will look up this run in the metadata
+    #it will match since it uses 'getFlagValue' that checks in FLAGS_DEFAULTS
+    def __eq__(self, other):
+        for k in Experiment.FLAGS_DEFAULTS.keys():
+            if k == 'epochs': continue
+
+            if self.getFlagValue(k) != other.getFlagValue(k):
+                return False
+        return True
+
+
 
     def __getstate__(self):
         """Return state values to be pickled."""
@@ -59,14 +87,6 @@ class Experiment:
 
     def __hash__(self):
         return hash(self.buildLabel())
-
-    def __eq__(self, other):
-        for k in Experiment.FLAGS_DEFAULTS.keys():
-            if k == 'epochs': continue
-
-            if self.getFlagValue(k) != other.getFlagValue(k):
-                return False
-        return True
 
     def __str__(self):
         return 'Experiment: ' + self.buildLabel()
@@ -105,10 +125,6 @@ class Experiment:
 
                     self.results.append(experiment_results.ExperimentResults(self.buildLabel(), self.flags))
 
-    def getFlagValue(self, name):
-        if name in self.flags.keys():
-            return self.flags[name]
-        return Experiment.FLAGS_DEFAULTS[name]
 
     def getDatasetSize(self):
         if self.getFlagValue('model') == 'simple':

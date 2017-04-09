@@ -59,7 +59,7 @@ class ExperimentRunner:
 
         self.batch_size = experiments[0].getFlagValue('b')
         self.sesop_batch_size = experiments[0].getFlagValue('sesop_batch_size')
-        self.careless_batch_size = 250
+        self.careless_batch_size = 100
 
         self.train_dataset_size, self.test_dataset_size = experiments[0].getDatasetSize()
 
@@ -165,18 +165,25 @@ class ExperimentRunner:
             print 'Setting up optimizers'
             optimizer = SeboostOptimizer(self.experiments)
 
+            print 'Write graph into tensorboard'
+            writer = tf.summary.FileWriter('/tmp/generated_data/' + '1')
+            writer.add_graph(sess.graph)
+
+            exit()
             print 'init vars'
             sess.run(tf.local_variables_initializer())
             sess.run(tf.global_variables_initializer())
 
             print 'Reload/Dumping models'
             self.dump_results()
-            for e in tqdm.tqdm(self.experiments):
+            for e in self.experiments:
                 if e.get_number_of_ran_iterations() > 0 and self.force_rerun == False:
                     for m in e.models:
+                        print 'Reloading model...'
                         m.init_from_checkpoint(sess)
                 else:
                     for m in e.models:
+                        print 'Dumping model...'
                         m.dump_checkpoint(sess)
 
             sess.graph.finalize()
@@ -190,9 +197,9 @@ class ExperimentRunner:
                 for m in e.models:
                     sess.run(m.stage)
 
-            print 'Write graph into tensorboard'
-            writer = tf.summary.FileWriter('/tmp/generated_data/' + '1')
-            writer.add_graph(sess.graph)
+            # print 'Write graph into tensorboard'
+            # writer = tf.summary.FileWriter('/tmp/generated_data/' + '1')
+            # writer.add_graph(sess.graph)
             #self.epochs = 0
             # Progress bar:
 
@@ -253,7 +260,7 @@ def find_cifar_baseline():
     #for lr in [1.1, 1.2, 1.3, 1.4]:
     #for lr in [0.8]:
         experiments[len(experiments)] = experiment.Experiment(
-            {
+        {
                 'model': 'cifar10',
                 'b': 128,
                 'lr': lr,
@@ -263,7 +270,7 @@ def find_cifar_baseline():
                 'epochs': 100,
                 # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
                 'nodes': 1,
-
+                'num_residual_units': 4,
                 # Not relevant!
                 'dim': None,
                 'output_dim': None,
@@ -271,8 +278,40 @@ def find_cifar_baseline():
                 'hidden_layers_num': None,
                 'hidden_layers_size': None
 
-            })
+        })
     return experiments
+
+def find_cifar_multinode(n):
+    experiments = {}
+    #for lr in [0.4, 0.3, 0.2, 0.1, 0.05, 0.025, 0.025/2]:
+    #for lr in [0.2, 0.1, 0.05, 0.025]:
+    for lr in [0.2]:
+    #for lr in [0.3, 0.4, 0.5, 0.6]:
+    #for lr in [0.7, 0.8, 0.9, 1.0]:
+    #for lr in [1.1, 1.2, 1.3, 1.4]:
+    #for lr in [0.8]:
+        experiments[len(experiments)] = experiment.Experiment(
+        {
+                'model': 'cifar10',
+                'b': 128,
+                'lr': lr,
+                'sesop_batch_size': 1000,
+                'sesop_freq': (1.0 / 2.0),  # sesop every 1 epochs (no sesop)
+                'hSize': 1,
+                'epochs': 100,
+                # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
+                'nodes': n,
+                'num_residual_units': 1,
+                # Not relevant!
+                'dim': None,
+                'output_dim': None,
+                'dataset_size': None,
+                'hidden_layers_num': None,
+                'hidden_layers_size': None
+
+        })
+    return experiments
+
 
 def find_cifar_history():
     experiments = {}
@@ -333,7 +372,8 @@ def run_cifar_expr():
 
     return experiments
 
-experiments = find_cifar_baseline()
+#experiments = find_cifar_baseline()
 #experiments = find_cifar_history()
+experiments = find_cifar_multinode(2)
 runner = ExperimentRunner(experiments, force_rerun=True)
 runner.run()
