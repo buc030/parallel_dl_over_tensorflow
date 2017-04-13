@@ -313,11 +313,12 @@ class CifarModel(Model):
                       relu_leakiness=0.1,
                       optimizer=self.experiment.getFlagValue('optimizer'))
 
-        self.model = ResNet(hps, self.input, self.label, 'train', 3, get_variable, self.hvar_mgr)
-        self.model._build_model()
+        with tf.variable_scope('model_' + str(self.node_id)):
+            self.model = ResNet(hps, self.input, self.label, 'train', 3, get_variable, self.hvar_mgr)
+            self.model._build_model()
 
-        #self.model._extra_train_ops.append(self.stage)
-        self.model._build_train_op()
+            #self.model._extra_train_ops.append(self.stage)
+            self.model._build_train_op()
 
         self._loss = self.model.cost
         self.model._accuracy = self.model.accuracy #tf.group(*[self.model.accuracy, self.stage])

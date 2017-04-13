@@ -163,7 +163,8 @@ class ExperimentRunner:
 
 
             print 'Setting up optimizers'
-            optimizer = SeboostOptimizer(self.experiments)
+            with tf.name_scope('seboost'):
+                optimizer = SeboostOptimizer(self.experiments)
 
             print 'Write graph into tensorboard'
             writer = tf.summary.FileWriter('/tmp/generated_data/' + '1')

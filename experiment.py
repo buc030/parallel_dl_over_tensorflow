@@ -121,7 +121,7 @@ class Experiment:
                     assert(model is not None)
 
                     self.models.append(model)
-                    scope.reuse_variables()
+                    #scope.reuse_variables()
 
                     self.results.append(experiment_results.ExperimentResults(self.buildLabel(), self.flags))
 

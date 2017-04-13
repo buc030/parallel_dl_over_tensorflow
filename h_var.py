@@ -3,6 +3,7 @@ import tensorflow as tf
 from summary_manager import SummaryManager
 import numpy as np
 
+from SharedVariablesManager import SharedVariablesManager
 
 class HVar:
     #this contains all alphas in the graph
@@ -28,7 +29,7 @@ class HVar:
         print 'var.name = ' + str(var.name)
         print 'self.name = ' + str(self.name)
 
-        with tf.variable_scope(self.name):
+        with tf.variable_scope(self.name + '_subspace'):
             self.sub_init(var)
 
     def sub_init(self, var):
@@ -49,35 +50,37 @@ class HVar:
         if self.model.experiment.getFlagValue('nodes') == 1 and self.model.experiment.getFlagValue('hSize') == 0:
             return
 
-        with tf.name_scope(self.name + '_subspace'):
-            # snapshot is taken after each sesop. after a sesop, the snapshot will contain the value after sesop ran.
-            # we need this variable to be shared so we will be able to push the "after sesop value" back into the workers.
-            self.last_snapshot = tf.get_variable(initializer=var.initialized_value(), name='snapshot')
-            #print 'self.last_snapshot = ' + str(self.last_snapshot.name)
-            #node 0 also holds 'nodes - 1' variables. 1 for each other node:
-            #the last n-1 replicas are "nodes" replicas.
-            with tf.variable_scope('replicas'):
-                for i in range(self.nodes - 1):
-                    #Note we use tf.getVariable, so thes variables are shared between all nodes.
-                    self.replicas.append(tf.get_variable(initializer=np.zeros(var.get_shape(), dtype=np.float32), \
-                                                        dtype=var.dtype.base_dtype, name='replica_' + str(i)))
-                    #print 'replica: ' + str(self.replicas[-1].name)
+        # snapshot is taken after each sesop. after a sesop, the snapshot will contain the value after sesop ran.
+        # we need this variable to be shared so we will be able to push the "after sesop value" back into the workers.
+        self.last_snapshot = SharedVariablesManager.get_snapshot(self.model, var)
+            #tf.get_variable(initializer=var.initialized_value(), name='snapshot')
+        self.replicas = SharedVariablesManager.get_replicas(self.model, var)
+
+        #print 'self.last_snapshot = ' + str(self.last_snapshot.name)
+        #node 0 also holds 'nodes - 1' variables. 1 for each other node:
+        #the last n-1 replicas are "nodes" replicas.
+        # with tf.variable_scope('replicas'):
+        #     for i in range(self.nodes - 1):
+        #         #Note we use tf.getVariable, so thes variables are shared between all nodes.
+        #         self.replicas.append(tf.get_variable(initializer=np.zeros(var.get_shape(), dtype=np.float32), \
+        #                                                 dtype=var.dtype.base_dtype, name='replica_' + str(i)))
+                #print 'replica: ' + str(self.replicas[-1].name)
                 #print 'self.last_snapshot = ' + str(self.last_snapshot.name)
 
-            if self.node_id == 0:
-                with tf.name_scope('history'):
-                    for i in range(self.hSize):
-                        self.history.append(tf.Variable(np.zeros(var.get_shape()),\
+        if self.node_id == 0:
+            with tf.name_scope('history'):
+                for i in range(self.hSize):
+                    self.history.append(tf.Variable(np.zeros(var.get_shape()),\
                             dtype=var.dtype.base_dtype, name='h_' + str(i)))
 
-                with tf.name_scope('history_alpha'):
-                    for i in range(self.hSize):
-                        self.history_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_h_' + str(i)))
+            with tf.name_scope('history_alpha'):
+                for i in range(self.hSize):
+                    self.history_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_h_' + str(i)))
                         #SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_h', self.history_aplha[-1]))
 
-                with tf.name_scope('replicas_aplha'):
-                    for i in range(self.nodes - 1):
-                        self.replicas_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_n_' + str(i)))
+            with tf.name_scope('replicas_aplha'):
+                for i in range(self.nodes - 1):
+                    self.replicas_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_n_' + str(i)))
                         #SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_n', self.replicas_aplha[-1]))
 
         self.zero_alpha = None
@@ -87,8 +90,10 @@ class HVar:
                 self.update_history_op() #make sure all ops are created
 
         if self.node_id != 0:
-            self.pull_from_master = tf.assign(self.var, self.last_snapshot)
-            self.push_to_master = tf.assign(self.replicas[self.node_id - 1], self.out())
+            with tf.name_scope('pull_from_master'):
+                self.pull_from_master = tf.assign(self.var, self.last_snapshot)
+            with tf.name_scope('push_to_master'):
+                self.push_to_master = tf.assign(self.replicas[self.node_id - 1], self.out())
 
 
     def out(self):
