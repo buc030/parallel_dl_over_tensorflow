@@ -41,7 +41,7 @@ class Model(object):
 
     def calc_train_accuracy(self, sess, batch_size, train_dataset_size):
         train_error = np.zeros(1)
-        self.batch_provider.set_source(sess, batch_size, 1)
+        self.batch_provider.set_data_source(sess, 'train')
 
         for i in range((train_dataset_size / 1) / batch_size):
             train_error += np.array(sess.run(self.accuracy()))
@@ -130,7 +130,7 @@ class Model(object):
 
     #self dontate a batch to be used by all.
     def get_shared_feed(self, sess, models):
-        x, y = sess.run(self.batch_provider.batch())
+        x, y = sess.run([self.input, self.label])
         res = {self.input: x, self.label: y}
         for m in models:
             res[m.input] = x

@@ -202,7 +202,7 @@ class ExperimentRunner:
             threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
             for batch_provider in self.batch_providers:
-                batch_provider.custom_runner.start_threads(sess)
+                batch_provider.custom_runner.start_threads(sess, n_train_threads=8, n_test_threads=1)
 
             print 'pulling initial weights from master'
             for e in self.experiments:
@@ -440,8 +440,8 @@ def simple():
 def find_simple_baseline():
     experiments = {}
 
-    #0.05 is the winner
-    for lr in [0.06, 0.05, 0.04, 0.03, 0.02]:
+    #0.08 is the winner
+    for lr in [0.1, 0.09, 0.08, 0.07, 0.06, 0.05]:
         experiments[len(experiments)] = experiment.Experiment(
         {
             'model': 'simple',
@@ -454,7 +454,7 @@ def find_simple_baseline():
             'nodes': 1,
             'dim': 10,
             'output_dim': 1,
-            'dataset_size': 5000,
+            'dataset_size': 50000,
             'hidden_layers_num': 3,
             'hidden_layers_size': 100,
 
@@ -472,15 +472,15 @@ def simple_with_history_baseline(h, sesop_batch_mult):
         {
             'model': 'simple',
             'b': 100,
-            'lr': 0.05,
+            'lr': 0.08,
             'sesop_batch_size': 0,
             'sesop_batch_mult': sesop_batch_mult,
-            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'sesop_freq': 1.0 / 500.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
             'hSize': h,
             'nodes': 1,
             'dim': 10,
             'output_dim': 1,
-            'dataset_size': 5000,
+            'dataset_size': 50000,
             'hidden_layers_num': 3,
             'hidden_layers_size': 100,
 
@@ -492,74 +492,22 @@ def simple_with_history_baseline(h, sesop_batch_mult):
     })
     return experiments
 
-def simple_with_history_bi_batch_size_baseline(h):
+
+def simple_multinode(n, h, sesop_batch_mult):
     experiments = {}
     experiments[len(experiments)] = experiment.Experiment(
         {
             'model': 'simple',
             'b': 100,
-            'lr': 0.05,
-            'sesop_batch_size': 0,
-            'sesop_batch_mult': 8,
-            #'sesop_freq': 1.0 / 38.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
-            'sesop_freq': 1.0 / 50.0,
-            'hSize': h,
-            'nodes': 1,
-            'dim': 10,
-            'output_dim': 1,
-            'dataset_size': 5000,
-            'hidden_layers_num': 3,
-            'hidden_layers_size': 100,
-
-
-            'epochs': 30,
-            'num_residual_units': None
-
-
-    })
-    return experiments
-
-def simple_multinode(n, sesop_batch_mult):
-    experiments = {}
-    experiments[len(experiments)] = experiment.Experiment(
-        {
-            'model': 'simple',
-            'b': 100,
-            'lr': 0.05,
+            'lr': 0.08,
             'sesop_batch_size': 0,
             'sesop_batch_mult': sesop_batch_mult,
-            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
-            'hSize': 0,
-            'nodes': n,
-            'dim': 10,
-            'output_dim': 1,
-            'dataset_size': 5000,
-            'hidden_layers_num': 3,
-            'hidden_layers_size': 100,
-
-
-            'epochs': 30,
-            'num_residual_units': None
-
-
-    })
-    return experiments
-
-def simple_multinode_with_history(n, h, sesop_batch_mult):
-    experiments = {}
-    experiments[len(experiments)] = experiment.Experiment(
-        {
-            'model': 'simple',
-            'b': 100,
-            'lr': 0.05,
-            'sesop_batch_size': 0,
-            'sesop_batch_mult': sesop_batch_mult,
-            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'sesop_freq': 1.0 / 500.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
             'hSize': h,
             'nodes': n,
             'dim': 10,
             'output_dim': 1,
-            'dataset_size': 5000,
+            'dataset_size': 50000,
             'hidden_layers_num': 3,
             'hidden_layers_size': 100,
 
@@ -570,4 +518,4 @@ def simple_multinode_with_history(n, h, sesop_batch_mult):
 
     })
     return experiments
-#TODO: add test loss
+

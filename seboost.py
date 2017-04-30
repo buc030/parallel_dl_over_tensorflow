@@ -143,7 +143,7 @@ class SeboostOptimizer:
             sess.run(b4_sesop)
 
             #Now optimize by alpha
-            master_model.batch_provider.set_data_source(sess, 'sesop')
+            master_model.batch_provider.set_data_source(sess, 'train')
 
             feed_dicts = []
             for i in range(master_model.experiment.sesop_batch_mult):

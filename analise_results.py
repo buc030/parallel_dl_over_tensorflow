@@ -7,7 +7,7 @@ import experiments_manager
 
 #from experiment_runner import find_cifar_baseline, find_cifar_history
 from experiment_runner import find_cifar_baseline, find_cifar_multinode, simple_with_history_baseline, \
-    find_simple_baseline, simple_with_history_bi_batch_size_baseline, simple_multinode, simple_multinode_with_history, simple
+    find_simple_baseline, simple_multinode, simple
 def display_results(experiments):
 
     loaded_experiments = {}
@@ -46,9 +46,10 @@ def display_results(experiments):
     #comperator.compare(group_by='nodes', error_type='train', filter=lambda e: e.getFlagValue('hidden_layers_num') > 0)
     plt.show()
 
-#experiments = find_simple_baseline()
+
 experiments = {}
 
+experiments = find_simple_baseline()
 
 #
 # experiments[len(experiments)] = simple_with_history_bi_batch_size_baseline(1)[0]
@@ -59,7 +60,24 @@ experiments = {}
 #
 # experiments[len(experiments)] = simple_multinode(n=4, sesop_batch_mult=2)[0]
 
-experiments = find_simple_baseline()
+#experiments = find_simple_baseline()
+# experiments[len(experiments)] = simple_with_history_baseline(h=1, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_with_history_baseline(h=2, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_with_history_baseline(h=4, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_with_history_baseline(h=8, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_with_history_baseline(h=8, sesop_batch_mult=8)[0]
+# # experiments[len(experiments)] = simple_multinode(n=2, h=0, sesop_batch_mult=1)[0]
+# # experiments[len(experiments)] = simple_multinode(n=2, h=0, sesop_batch_mult=5)[0]
+# # experiments[len(experiments)] = simple_multinode(n=2, h=1, sesop_batch_mult=5)[0]
+# # experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=2, h=8, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=2, h=16, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=2, h=16, sesop_batch_mult=17)[0]
+#
+#
+# experiments[len(experiments)] = simple_multinode(n=4, h=0, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=4, h=4, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=4, h=8, sesop_batch_mult=5)[0]
 
 #experiments[len(experiments)] = simple_multinode(4)[0]
 # experiments_baseline = find_cifar_baseline()

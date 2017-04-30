@@ -48,12 +48,12 @@ class CustomRunner(object):
         # the mnist features, and a scalar label.
         self.train_queue = tf.RandomShuffleQueue(shapes=[[self.dim], [self.label_dim]],
                                                  dtypes=[tf.float32, tf.float32],
-                                                 capacity=2000,
+                                                 capacity=6000,
                                                  min_after_dequeue=1000)
 
         self.test_queue = tf.FIFOQueue(shapes=[[self.dim], [self.label_dim]],
                                        dtypes=[tf.float32, tf.float32],
-                                       capacity=2000)
+                                       capacity=5000)
 
         #0 mean test, 1 mean train
         self.data_source_idx = tf.Variable(tf.cast(1, tf.int32), trainable=False, name='data_source_idx')
