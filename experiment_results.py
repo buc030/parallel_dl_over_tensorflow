@@ -22,7 +22,10 @@ class ExperimentResults:
         self.trainError = []
         self.testError = []
         self.trainErrorPerItereation = []
-
+        self.debug_sesop_before = []
+        self.debug_sesop_after = []
+        self.debug_sesop_on_sesop_batch_before = []
+        self.debug_sesop_on_sesop_batch_after = []
 
 
         self.epochTimes = []
@@ -46,10 +49,10 @@ class ExperimentResults:
         if len(self.trainError) == 0:
             print 'No data!'
             assert(False)
-        return min([1 - l for l in self.trainError if l > 0])
+        return min([l for l in self.trainError if l > 0])
 
     def getBestTestError(self):
-        return min([1 - l for l in self.testError if l > 0])
+        return min([l for l in self.testError if l > 0])
 
     def plotTrainErrorPerIteration(self, flag_names_to_use_in_label=None):
         plt.title('Train Error')
@@ -67,7 +70,7 @@ class ExperimentResults:
         plt.ylabel('Error')
         full_label = 'train(' + self.label + ')'
         if flag_names_to_use_in_label is not None:
-            full_label = self.buildLabel(flag_names_to_use_in_label)
+            full_label = 'train(' + self.buildLabel(flag_names_to_use_in_label) + ')'
         plt.plot(range(len(self.trainError[l[0]:l[1]])), self.trainError[l[0]:l[1]], '-', label=full_label)
         plt.legend()
 
@@ -78,7 +81,7 @@ class ExperimentResults:
 
         full_label = 'test(' + self.label + ')'
         if flag_names_to_use_in_label is not None:
-            full_label = self.buildLabel(flag_names_to_use_in_label)
+            full_label = 'test(' +self.buildLabel(flag_names_to_use_in_label) + ')'
 
         #print 'Test min error is ' + str(1 - min(self.testError[l[0]:l[1]]))
 
@@ -86,8 +89,7 @@ class ExperimentResults:
         # plt.plot(range(self.testError[:l].size), self.testError[:l], 'o')
         plt.legend()
 
-
-    def plotTrainErrorAroundMerge(self, l=(0,100)):
+    def plotTrainErrorAroundMerge(self, l=(0, 100)):
 
         y = []
         for i in range(1, len(self.errors_b4_merge)):
@@ -97,13 +99,13 @@ class ExperimentResults:
                 break
 
             y.append(self.errors_b4_merge[i])
-            plt.axvline(x=len(y)-1, ls='-', color='g') #mark begining
+            plt.axvline(x=len(y) - 1, ls='-', color='g')  # mark begining
             try:
                 y.append(self.errors_after_merge[i])
             except:
                 y.append(10)
 
-            plt.axvline(x=len(y)-1, ls='--', color='r')  #mark end
+            plt.axvline(x=len(y) - 1, ls='--', color='r')  # mark end
 
         x = range(len(y))
         print len(x)
@@ -246,7 +248,7 @@ def experiment_diff(es):
     res = []
     for flag_name in experiment.Experiment.FLAGS_DEFAULTS.keys():
         for e in es:
-            if es[1].getFlagValue(flag_name) != e.getFlagValue(flag_name):
+            if len(es) == 1 or es[1].getFlagValue(flag_name) != e.getFlagValue(flag_name):
                 res.append(flag_name)
                 break
     return res
@@ -320,13 +322,18 @@ class ExperimentComperator:
             for expr in expreiments:
                 diff = experiment_diff(expreiments)
 
+                idx = node_id
+                #idx = len(expr.results) - 1
                 #On the label, show the group_by value, and the diff values
                 if error_type == 'test':
-                    expr.results[node_id].plotTestError((0,100), diff + [group_by])
+                    expr.results[idx].plotTestError((0,100), diff + [group_by])
+                elif error_type == 'train_and_test':
+                    expr.results[idx].plotTestError((0, 100), [group_by])
+                    expr.results[idx].plotTrainError((0, 100), [group_by])
                 elif error_type == 'trainPerIteration':
-                    expr.results[node_id].plotTrainErrorPerIteration(diff + [group_by])
+                    expr.results[idx].plotTrainErrorPerIteration(diff + [group_by])
                 else:
-                    expr.results[node_id].plotTrainError((0,100), diff + [group_by])
+                    expr.results[idx].plotTrainError((0,100), diff + [group_by])
             #plt.legend(loc='center left', bbox_to_anchor=(0.4, 1))
 
             fontP = FontProperties()
@@ -357,7 +364,7 @@ class ExperimentComperator:
             for expr in expreiments:
                 final_label = expr.results[node_id].buildLabel(diff + [group_by])
                 if error_type == 'test':
-                    print 'expr.results[node_id].getBestTestError() = ' + str(1 - expr.results[node_id].getBestTestError())
+                    print 'expr.results[node_id].getBestTestError() = ' + str(expr.results[node_id].getBestTestError())
                     rect = ax.bar(pos, expr.results[node_id].getBestTestError(), width,\
                               color=cycler.get())
                 else:

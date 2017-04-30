@@ -11,7 +11,7 @@ import utils
 class ExperimentsManager(object):
     __metaclass__ = utils.Singleton
 
-    BASE_PATH = '/tmp/generated_data/ExperimentsManager/'
+    BASE_PATH = '/home/shai/ExperimentsManager/'
     METADATA_FILE = BASE_PATH + 'metadata'
     TENSOR_BOARD_DIRS = BASE_PATH + 'TensorBoard/'
     MODEL_CHECKPOINT_DIRS = BASE_PATH + 'ModelCheckpoints/'
@@ -105,6 +105,7 @@ class ExperimentsManager(object):
         #TODO: add dump model weights
 
     def load_experiment(self, experiment):
+        print 'experiment = ' + str(experiment)
         path = self.lookup_experiment_path(experiment)
         if path is None:
             #assert(False)

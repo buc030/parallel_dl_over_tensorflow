@@ -19,131 +19,179 @@
 import tensorflow as tf
 
 
-def build_train_example_queue(image, image_size, max_batch_size, depth):
-    with tf.name_scope('train_example_queue'):
-        with tf.name_scope('resize_image_with_crop_or_pad'):
+class CifarInput:
+
+    def build_train_example_queue(self, image, image_size, max_batch_size, depth):
+        with tf.name_scope('train_example_queue'):
+            with tf.name_scope('resize_image_with_crop_or_pad'):
+                image = tf.image.resize_image_with_crop_or_pad(
+                    image, image_size + 4, image_size + 4)
+            with tf.name_scope('random_crop'):
+                image = tf.random_crop(image, [image_size, image_size, 3])
+            with tf.name_scope('random_flip_left_right'):
+                image = tf.image.random_flip_left_right(image)
+            # Brightness/saturation/constrast provides small gains .2%~.5% on cifar.
+            # image = tf.image.random_brightness(image, max_delta=63. / 255.)
+            # image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+            # image = tf.image.random_contrast(image, lower=0.2, upper=1.8)
+            with tf.name_scope('per_image_standardization'):
+                image = tf.image.per_image_standardization(image)
+
+            with tf.name_scope('random_shuffle_queue'):
+                example_queue = tf.RandomShuffleQueue(
+                        capacity=32 * max_batch_size,
+                        min_after_dequeue=1 * max_batch_size,
+                        dtypes=[tf.float32, tf.int32],
+                        shapes=[[image_size, image_size, depth], [1]])
+            return image, example_queue
+
+    def build_test_example_queue(self, image, image_size, max_batch_size, depth):
+
+        with tf.name_scope('test_example_queue'):
             image = tf.image.resize_image_with_crop_or_pad(
-                image, image_size + 4, image_size + 4)
-        with tf.name_scope('random_crop'):
-            image = tf.random_crop(image, [image_size, image_size, 3])
-        with tf.name_scope('random_flip_left_right'):
-            image = tf.image.random_flip_left_right(image)
-        # Brightness/saturation/constrast provides small gains .2%~.5% on cifar.
-        # image = tf.image.random_brightness(image, max_delta=63. / 255.)
-        # image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
-        # image = tf.image.random_contrast(image, lower=0.2, upper=1.8)
-        with tf.name_scope('per_image_standardization'):
+                    image, image_size, image_size)
+
             image = tf.image.per_image_standardization(image)
 
-        with tf.name_scope('random_shuffle_queue'):
-            example_queue = tf.RandomShuffleQueue(
-                    capacity=32 * max_batch_size,
-                    min_after_dequeue=1 * max_batch_size,
+            example_queue = tf.FIFOQueue(
+                    1 * max_batch_size,
                     dtypes=[tf.float32, tf.int32],
                     shapes=[[image_size, image_size, depth], [1]])
-        return image, example_queue
+            return image, example_queue
 
-def build_test_example_queue(image, image_size, max_batch_size, depth):
+    def build_example_queue(self, train_image, train_label, test_image, test_label, sesop_image, sesop_label,
+                            image_size, max_batch_size, depth, is_training, num_threads):
 
-    with tf.name_scope('test_example_queue'):
-        image = tf.image.resize_image_with_crop_or_pad(
-                image, image_size, image_size)
-        image = tf.image.per_image_standardization(image)
-
-        example_queue = tf.FIFOQueue(
-                16 * max_batch_size,
-                dtypes=[tf.float32, tf.int32],
-                shapes=[[image_size, image_size, depth], [1]])
-        return image, example_queue
-
-def build_example_queue(image, label, image_size, max_batch_size, depth, is_training, num_threads):
-    train_image, train_example_queue = build_test_example_queue(image, image_size, max_batch_size, depth)
-    test_image, test_example_queue = build_train_example_queue(image, image_size, max_batch_size, depth)
-
-    queue = tf.QueueBase.from_list(tf.cast(tf.equal(is_training, True), tf.int32), [test_example_queue, train_example_queue])
-    image = tf.cond(tf.equal(is_training, True), lambda: train_image, lambda: test_image)
-
-    train_example_enqueue_op = train_example_queue.enqueue([image, label])
-    test_example_enqueue_op = test_example_queue.enqueue([image, label])
-
-    tf.train.add_queue_runner(tf.train.queue_runner.QueueRunner(
-        queue, ([train_example_enqueue_op]* num_threads) + [test_example_enqueue_op]) )
-
-    return image, queue
+        train_image, train_example_queue = self.build_train_example_queue(train_image, image_size, max_batch_size, depth)
+        test_image, test_example_queue = self.build_test_example_queue(test_image, image_size, max_batch_size, depth)
+        sesop_train_image, sesop_example_queue = self.build_train_example_queue(sesop_image, image_size, max_batch_size, depth)
 
 
-def build_input(dataset, data_path, test_path, batch_size, max_batch_size, is_training, num_threads):
-  """Build CIFAR image and labels.
+        train_example_enqueue_op = train_example_queue.enqueue([train_image, train_label])
+        test_example_enqueue_op = test_example_queue.enqueue([test_image, test_label])
+        sesop_example_enqueue_op = sesop_example_queue.enqueue([sesop_train_image, sesop_label])
 
-  Args:
-    dataset: Either 'cifar10' or 'cifar100'.
-    data_path: Filename for data.
-    batch_size: Input batch size.
-    mode: Either 'train' or 'eval'.
-  Returns:
-    images: Batches of images. [batch_size, image_size, image_size, 3]
-    labels: Batches of labels. [batch_size, num_classes]
-  Raises:
-    ValueError: when the specified dataset is not supported.
-  """
-  enqueue_ops = []
-  image_size = 32
-  if dataset == 'cifar10':
-    label_bytes = 1
-    label_offset = 0
-    num_classes = 10
-  elif dataset == 'cifar100':
-    label_bytes = 1
-    label_offset = 1
-    num_classes = 100
-  else:
-    raise ValueError('Not supported dataset %s', dataset)
 
-  depth = 3
-  image_bytes = image_size * image_size * depth
-  record_bytes = label_bytes + label_offset + image_bytes
+        tf.train.add_queue_runner(tf.train.queue_runner.QueueRunner(
+           train_example_queue, [train_example_enqueue_op]* num_threads) )
+        tf.train.add_queue_runner(tf.train.queue_runner.QueueRunner(
+            test_example_queue, [test_example_enqueue_op]*1))
+        tf.train.add_queue_runner(tf.train.queue_runner.QueueRunner(
+            sesop_example_queue, [sesop_example_enqueue_op]*1))
 
-  data_files = tf.gfile.Glob(data_path)
-  test_files = tf.gfile.Glob(test_path)
-  #data_files = tf.gfile.Glob(path)
+        queue = tf.QueueBase.from_list(tf.cast(is_training, tf.int32), [test_example_queue, train_example_queue, sesop_example_queue])
 
-  #data_files = tf.gfile.Glob(data_path)
-  #print ''
-  train_file_queue = tf.train.string_input_producer(data_files, shuffle=True)
-  test_file_queue = tf.train.string_input_producer(test_files, shuffle=False)
+        #pred_fn_pairs, default
+        print 'sesop_train_image = ' + str(sesop_train_image)
+        print 'sesop_train_image = ' + str(sesop_train_image)
+        print 'sesop_train_image = ' + str(sesop_train_image)
+        print 'is_training = ' + str(is_training)
 
-  file_queue = tf.QueueBase.from_list(tf.cast(tf.equal(is_training, True), tf.int32), [test_file_queue, train_file_queue])
+        pred_fn_pairs = {}
+        pred_fn_pairs[tf.equal(is_training, tf.cast(0, tf.int32))] = lambda: test_image
+        pred_fn_pairs[tf.equal(is_training, tf.cast(1, tf.int32))] = lambda: train_image
+        pred_fn_pairs[tf.equal(is_training, tf.cast(2, tf.int32))] = lambda: sesop_train_image
 
-  # Read examples from files in the filename queue.
-  reader = tf.FixedLengthRecordReader(record_bytes=record_bytes)
-  _, value = reader.read(file_queue)
+        #assert_op = tf.Assert(tf.equal(2, 1), [0])
+        default = lambda: sesop_train_image
 
-  # Convert these examples to dense labels and processed images.
-  record = tf.reshape(tf.decode_raw(value, tf.uint8), [record_bytes])
-  label = tf.cast(tf.slice(record, [label_offset], [label_bytes]), tf.int32)
-  # Convert from string to [depth * height * width] to [depth, height, width].
-  depth_major = tf.reshape(tf.slice(record, [label_bytes], [image_bytes]),
-                           [depth, image_size, image_size])
-  # Convert from [depth, height, width] to [height, width, depth].
-  image = tf.cast(tf.transpose(depth_major, [1, 2, 0]), tf.float32)
+        image = tf.case(pred_fn_pairs, default)
 
-  image, example_queue = build_example_queue(image, label, image_size, max_batch_size, depth, is_training, num_threads)
+        #image = tf.cond(tf.equal(is_training, True), lambda: train_image, lambda: test_image)
 
-  # Read 'batch' labels + images from the example queue.
-  images, labels = example_queue.dequeue_many(batch_size)
-  labels = tf.reshape(labels, [batch_size, 1])
-  indices = tf.reshape(tf.range(0, batch_size, 1), [batch_size, 1])
-  labels = tf.sparse_to_dense(
-      tf.concat(values=[indices, labels], axis=1),
-      [batch_size, num_classes], 1.0, 0.0)
+        return image, queue
 
-  assert len(images.get_shape()) == 4
+    def read_image(self, file_queue, record_bytes, label_offset, label_bytes, image_bytes, depth, image_size):
 
-  assert images.get_shape()[-1] == 3
-  assert len(labels.get_shape()) == 2
+        # Read examples from files in the filename queue.
+        reader = tf.FixedLengthRecordReader(record_bytes=record_bytes)
+        _, value = reader.read(file_queue)
 
-  assert labels.get_shape()[1] == num_classes
+        # Convert these examples to dense labels and processed images.
+        record = tf.reshape(tf.decode_raw(value, tf.uint8), [record_bytes])
+        label = tf.cast(tf.slice(record, [label_offset], [label_bytes]), tf.int32)
+        # Convert from string to [depth * height * width] to [depth, height, width].
+        depth_major = tf.reshape(tf.slice(record, [label_bytes], [image_bytes]),
+                                 [depth, image_size, image_size])
+        # Convert from [depth, height, width] to [height, width, depth].
+        image = tf.cast(tf.transpose(depth_major, [1, 2, 0]), tf.float32)
 
-  # Display the training images in the visualizer.
-  tf.summary.image('images', images)
-  return images, labels
+        return image, label
+
+
+    def __init__(self):
+        self.sesop_data_path = 'CIFAR_data/cifar-10-batches-bin/sesop_data_batch.bin'
+
+
+    def build_input(self, dataset, data_path, test_path, batch_size, max_batch_size, is_training, num_threads):
+      """Build CIFAR image and labels.
+
+      Args:
+        dataset: Either 'cifar10' or 'cifar100'.
+        data_path: Filename for data.
+        batch_size: Input batch size.
+        mode: Either 'train' or 'eval'.
+      Returns:
+        images: Batches of images. [batch_size, image_size, image_size, 3]
+        labels: Batches of labels. [batch_size, num_classes]
+      Raises:
+        ValueError: when the specified dataset is not supported.
+      """
+      enqueue_ops = []
+      image_size = 32
+      if dataset == 'cifar10':
+        label_bytes = 1
+        label_offset = 0
+        num_classes = 10
+      elif dataset == 'cifar100':
+        label_bytes = 1
+        label_offset = 1
+        num_classes = 100
+      else:
+        raise ValueError('Not supported dataset %s', dataset)
+
+      depth = 3
+      image_bytes = image_size * image_size * depth
+      record_bytes = label_bytes + label_offset + image_bytes
+
+      #data_files = tf.gfile.Glob(data_path)
+      test_files = tf.gfile.Glob(test_path)
+      data_files = tf.gfile.Glob(data_path)
+      sesop_data_files = tf.gfile.Glob(self.sesop_data_path)
+
+      #print ''
+      train_file_queue = tf.train.string_input_producer(data_files, shuffle=True)
+      test_file_queue = tf.train.string_input_producer(test_files, shuffle=False)
+      sesop_file_queue = tf.train.string_input_producer(sesop_data_files, shuffle=True)
+
+
+      train_image, train_label = self.read_image(train_file_queue, record_bytes, label_offset, label_bytes, image_bytes, depth, image_size)
+      test_image, test_label = self.read_image(test_file_queue, record_bytes, label_offset, label_bytes, image_bytes, depth, image_size)
+      sesop_image, sesop_label = self.read_image(sesop_file_queue, record_bytes, label_offset, label_bytes, image_bytes, depth, image_size)
+
+
+      image, example_queue = self.build_example_queue(train_image, train_label, test_image, test_label, sesop_image, sesop_label,
+                                                      image_size, max_batch_size, depth, is_training, num_threads)
+
+      # Read 'batch' labels + images from the example queue.
+      images, labels = example_queue.dequeue_many(batch_size)
+
+      #images = tf.Print(images, [tf.shape(images)])
+      labels = tf.reshape(labels, [batch_size, 1])
+      indices = tf.reshape(tf.range(0, batch_size, 1), [batch_size, 1])
+      labels = tf.sparse_to_dense(
+          tf.concat(values=[indices, labels], axis=1),
+          [batch_size, num_classes], 1.0, 0.0)
+
+      assert len(images.get_shape()) == 4
+
+      assert images.get_shape()[-1] == 3
+      assert len(labels.get_shape()) == 2
+
+      assert labels.get_shape()[1] == num_classes
+
+      # Display the training images in the visualizer.
+
+
+      tf.summary.image('images', images, max_outputs=3)
+      return images, labels

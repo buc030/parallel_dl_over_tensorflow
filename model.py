@@ -12,14 +12,10 @@ class FCLayer:
     def __init__(self, input, n_in, n_out, model, prefix):
         with tf.variable_scope(prefix):
             #print 'prefix = ' + str(prefix)
-            self.W = model.hvar_mgr.create_var(tf.Variable(tf.random_normal([n_in, n_out], seed=1), name='W'))
+            self.W = model.hvar_mgr.create_var(tf.Variable(tf.random_normal([n_in, n_out]), name='W'))
 
             self.b = model.hvar_mgr.create_var(tf.Variable(tf.zeros([n_out]), name='b'))
             a = tf.matmul(input, self.W.out()) + self.b.out()
-
-            # W = tf.Variable(tf.random_normal([n_in, n_out]), name='W')
-            # b = tf.Variable(tf.zeros([n_out]), name='b')
-            # a = tf.matmul(input, W) + b
 
             self.out = tf.nn.tanh(a)
 
@@ -28,9 +24,25 @@ class FCLayer:
         #print 'b = ' + str(sess.run(self.b.var))
         print 'W.out = ' + str(sess.run(self.W.out()))
 
+import numpy as np
 
 #This holds the model symbols
 class Model(object):
+
+    #in default case, accuracy is just the loss
+    def accuracy(self):
+        return self._loss
+
+    def calc_train_accuracy(self, sess, batch_size, train_dataset_size):
+        train_error = np.zeros(1)
+        self.batch_provider.set_source(sess, batch_size, 1)
+
+        for i in range((train_dataset_size / 1) / batch_size):
+            train_error += np.array(sess.run(self.accuracy()))
+        train_error /= float((train_dataset_size / 1) / batch_size)
+        return train_error
+
+
 
     def print_layer_params(self, sess, i):
          self.layers[i].print_params(sess)
@@ -76,7 +88,6 @@ class Model(object):
             return weights
 
         def all_history_update_ops(self):
-            print 'e = ' + str(self.model.experiment)
             b4_sesop = []
             after_sesop = []
             for hvar in self.all_hvars:
@@ -85,6 +96,13 @@ class Model(object):
                 after_sesop.append(after)
 
             return b4_sesop, after_sesop
+
+        def all_zero_alpha_ops(self):
+            res = []
+            for hvar in self.all_hvars:
+                res.append(hvar.zero_alpha_op())
+
+            return res
 
     def dump_checkpoint(self, sess):
         path = self.experiment.get_model_checkpoint_dir(self.node_id)
@@ -106,7 +124,7 @@ class Model(object):
 
     #self dontate a batch to be used by all.
     def get_shared_feed(self, sess, batch_size, is_train, models):
-        x, y = self.batch_provider.next_batch(sess, batch_size, is_train)
+        x, y = sess.run(self.batch_provider.batch())
         res = {self.input: x, self.label: y}
         for m in models:
             res[m.input] = x
@@ -132,8 +150,8 @@ class Model(object):
 
 
 
-        self.loss_placeholder = tf.placeholder(dtype=tf.float32, shape=[], name='loss_placeholder')
-        self.loss_b4_minus_after = tf.summary.scalar('loss_b4_minus_after', self.loss_placeholder)
+        #self.loss_placeholder = tf.placeholder(dtype=tf.float32, shape=[], name='loss_placeholder')
+        #self.loss_b4_minus_after = tf.summary.scalar('loss_b4_minus_after', self.loss_placeholder)
 
         self.i = 0
         self.j = 0
@@ -144,10 +162,11 @@ class Model(object):
         utils.printInfo(' self.batch_provider.batch() = ' + str( self.batch_provider.batch()))
 
         #Use stageing area:
-        stager = data_flow_ops.StagingArea([tf.float32, tf.float32])
-        self.stage = stager.put(self.batch_provider.batch())
-        self.input, self.label = stager.get() #self.batch_provider.batch()
-        #self.input, self.label = self.batch_provider.batch()
+        #stager = data_flow_ops.StagingArea([tf.float32, tf.float32])
+        #self.stage = stager.put(self.batch_provider.batch())
+        #self.input, self.label = stager.get() #self.batch_provider.batch()
+        self.stage = tf.no_op()
+        self.input, self.label = self.batch_provider.batch()
 
 
         # if not (self.experiment.getFlagValue('hSize') == 0 ) and self.node_id == 0:
@@ -206,21 +225,46 @@ class SimpleModel(Model):
         hidden_layers_size = experiment.getFlagValue('hidden_layers_size')
 
         #build layers:
-        self.layers = []
-        self.layers.append(FCLayer(self.input, input_dim, hidden_layers_size, self, 'FC_'  + str(len(self.layers))))
-        for i in range(hidden_layers_num):
-            self.layers.append(FCLayer(self.layers[-1].out, hidden_layers_size, hidden_layers_size, self, 'FC_' + str(len(self.layers))))
-        self.layers.append(FCLayer(self.layers[-1].out, hidden_layers_size, 1, self, 'FC_' + str(len(self.layers))))
+        with tf.variable_scope('model_' + str(self.node_id)):
+            self.layers = []
+            self.layers.append(FCLayer(self.input, input_dim, hidden_layers_size, self, 'FC_'  + str(len(self.layers))))
+            for i in range(hidden_layers_num):
+                self.layers.append(FCLayer(self.layers[-1].out, hidden_layers_size, hidden_layers_size, self, 'FC_' + str(len(self.layers))))
+            self.layers.append(FCLayer(self.layers[-1].out, hidden_layers_size, 1, self, 'FC_' + str(len(self.layers))))
 
-        self.model_out = self.layers[-1].out
+            self.model_out = self.layers[-1].out
 
         # when log is true we build a model for training!
 
         loss_per_sample = tf.squared_difference(self.model_out, self.label, name='loss_per_sample')
         self._loss = tf.reduce_mean(loss_per_sample, name='loss')
 
+        self.build_train_op()
 
 
+    def get_extra_train_ops(self):
+        return []
+
+
+    def build_train_op(self):
+        lrn_rate = tf.Variable(initial_value=self.experiment.getFlagValue('lr'), trainable=False, dtype=tf.float32,
+                               name='model_start_learning_rate')  # tf.constant(self.hps.lrn_rate, tf.float32)
+
+
+        self.lrn_rate = lrn_rate
+        trainable_variables = self.hvar_mgr.all_trainable_weights()
+        grads = tf.gradients(self._loss, trainable_variables)
+        optimizer = tf.train.GradientDescentOptimizer(self.lrn_rate)
+
+        apply_op = optimizer.apply_gradients(
+            zip(grads, trainable_variables), name='train_step')
+
+        train_ops = [apply_op] + self.get_extra_train_ops()
+        self._train_op = tf.group(*train_ops)
+
+
+    def train_op(self):
+        return [self._train_op]
 
 from resnet_model import ResNet, HParams
 
@@ -270,6 +314,9 @@ class MnistModel(Model):
 #This holds the model symbols
 class CifarModel(Model):
 
+    def get_extra_train_ops(self):
+        return self.model._extra_train_ops
+
     def accuracy(self):
         return self.model._accuracy
 
@@ -299,6 +346,23 @@ class CifarModel(Model):
             h_var = self.hvar_mgr.create_var(var)
             return h_var.out()
 
+        def get_h_variable(name,
+                         shape=None,
+                         dtype=None,
+                         initializer=None,
+                         regularizer=None,
+                         trainable=True,
+                         collections=None,
+                         caching_device=None,
+                         partitioner=None,
+                         validate_shape=True,
+                         custom_getter=None):
+
+            var = tf.get_variable(name, shape, dtype, initializer, regularizer, trainable, collections, caching_device,
+                                  partitioner, validate_shape, custom_getter)
+            h_var = self.hvar_mgr.create_var(var)
+            return h_var
+
         #filter_size, filter_size, in_filters, out_filters
 
         ##[?,1,4,4], [3,3,1,16].
@@ -313,8 +377,9 @@ class CifarModel(Model):
                       relu_leakiness=0.1,
                       optimizer=self.experiment.getFlagValue('optimizer'))
 
+        #self.input = tf.reshape(self.input, [-1, 3, 32, 32])
         with tf.variable_scope('model_' + str(self.node_id)):
-            self.model = ResNet(hps, self.input, self.label, 'train', 3, get_variable, self.hvar_mgr)
+            self.model = ResNet(hps, self.input, self.label, 'train', 3, get_variable, get_h_variable, self.hvar_mgr)
             self.model._build_model()
 
             #self.model._extra_train_ops.append(self.stage)

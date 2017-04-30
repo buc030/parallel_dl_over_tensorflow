@@ -10,6 +10,7 @@ from threading import current_thread
 import experiments_manager
 from summary_manager import SummaryManager
 from tf_utils import *
+from natural_gradient import NaturalGradientOptimizer
 
 import tqdm
 
@@ -20,12 +21,15 @@ class SeboostOptimizerParams:
         self.sgd_steps = int(1.0/model.experiment.getFlagValue('sesop_freq'))
         self.sesop_batch_size = model.experiment.sesop_batch_size
         self.batch_size = model.experiment.getFlagValue('b')
+        self.sesop_batch_mult = model.experiment.sesop_batch_mult
 
         self.cg_var_list = model.hvar_mgr.all_trainable_alphas()
         if len(self.cg_var_list) > 0:
-            self.cg = tf.contrib.opt.ScipyOptimizerInterface(model.loss(), var_list=self.cg_var_list, \
-                                                         method='CG', options={'maxiter': 10})
+            self.cg = tf.contrib.opt.ScipyOptimizerInterface(loss=model.loss(), var_list=self.cg_var_list, iteration_mult=self.sesop_batch_mult,\
+                                                             method='CG', options={'maxiter': 10})
 
+        # if len(self.cg_var_list) > 0:
+        #     self.cg = NaturalGradientOptimizer(model.loss(), model.model.predictions, self.cg_var_list)
 
 
 #This runs the same optimization process for 'models' with corosponding metaparameters defined in 'experiments'
@@ -37,7 +41,7 @@ class SeboostOptimizer:
     #we run CG once in sesop_freq iterations
     def __init__(self, experiments):
         self.sesop_runs = 0
-        self.dataset_size, _ = experiments[0].getDatasetSize()
+        self.train_dataset_size, self.test_dataset_size = experiments[0].getDatasetSize()
 
         self.batch_size = experiments[0].bs
         self.models = []
@@ -64,42 +68,71 @@ class SeboostOptimizer:
     def run_epoch(self, sess, stages):
 
         for m in self.models:
-            m.batch_provider.set_source(sess, self.batch_size, True)
+            m.batch_provider.set_source(sess, self.batch_size, 1)
 
 
-        for i in tqdm.tqdm(range(self.dataset_size/self.batch_size)):
+        for i in tqdm.tqdm(range(self.train_dataset_size/self.batch_size)):
             self.run_iter(sess, stages)
 
 
         print 'Actual sesop freq is: ' + str(float(self.sesop_runs + 1) / (self.curr_iter + 1))
 
 
+    def run_simple_iter(self, sess, stages):
+        #print '################### RUNNING SIMPLE ITER ################'
+        _, losses, __ = sess.run([self.train_steps, self.losses, stages])
+
+        i = 0
+        for e in self.experiments:
+            for model_idx in range(len(e.models)):
+                e.add_iteration_train_error(model_idx, losses[i])
+                i += 1
+
+        self.curr_iter += 1
+        return None  # TODO: need to return loss per experiment here
+
+
+
     def run_iter(self, sess, stages):
-        if self.curr_iter % self.params.values()[0].sgd_steps != 0:# or len(self.params.values()[0].cg_var_list) == 0:
-            _, losses, __ = sess.run([self.train_steps, self.losses, stages])
-
-            i = 0
-            for e in self.experiments:
-                for model_idx in range(len(e.models)):
-                    e.add_iteration_train_error(model_idx, losses[i])
-                    i += 1
-
-            self.curr_iter += 1
-            return None  # TODO: need to return loss per experiment here
+        if self.curr_iter % self.params.values()[0].sgd_steps != 0:
+            return self.run_simple_iter(sess, stages)
 
         return self.run_sesop(sess)
 
+    def dump_debug(self, sess, master_model, feed_dict, suffix):
+        return
+        with open('debug_' + suffix, 'w') as f:
+            f.write('loss = ' + str(sess.run(master_model.loss(), feed_dict=feed_dict)) + '\n')
+
+            #
+            # f.write('_images = ' + str(sess.run(master_model.model._images, feed_dict=feed_dict)) + '\n')
+            # f.write('res_layers[0] = ' + str(sess.run(master_model.model.res_layers[0], feed_dict=feed_dict)) + '\n')
+            # f.write('res_layers[-1] = ' + str(sess.run(master_model.model.res_layers[-1], feed_dict=feed_dict)) + '\n')
+            #
+            # f.write('predictions = ' + str(sess.run(master_model.model.predictions, feed_dict=feed_dict)) + '\n')
+            #
+            # f.write('cost = ' + str(sess.run(master_model.model.cost, feed_dict=feed_dict)) + '\n')
+            # f.write('cost_before_decay = ' + str(sess.run(master_model.model.cost_before_decay, feed_dict=feed_dict)) + '\n')
+
+            #cost_before_decay
+            for debug_hvar in master_model.hvar_mgr.all_hvars:
+                f.write('debug_hvar.out() = ' + str(sess.run(debug_hvar.out())) + '\n')
+                #f.write('debug_hvar.var = ' + str(sess.run(debug_hvar.var)))
+                f.write('---------------------')
+
+
     def run_sesop(self, sess):
+
+        if self.experiments[0].getFlagValue('hSize') == 0 and self.experiments[0].getFlagValue('nodes') == 1:
+            self.run_simple_iter(sess, [])
+            self.curr_iter += 1
+            return None
 
 
         #loss per experiment
         losses = {}
 
         for e in self.experiments:
-            if e.getFlagValue('hSize') == 0 and e.getFlagValue('nodes') == 1:
-                sess.run([self.params[m].train_step for m in e.models])
-                losses[e] = sess.run([m.loss() for m in e.models])
-                continue
 
             master_model = e.models[0]
             worker_models = e.models[1:]
@@ -110,42 +143,73 @@ class SeboostOptimizer:
                 sess.run(worker.push_to_master_op())
 
             b4_sesop, after_sesop = master_model.hvar_mgr.all_history_update_ops()
+            zero_alpha = master_model.hvar_mgr.all_zero_alpha_ops()
+
             #Push the new direction into P:
             sess.run(b4_sesop)
 
             #Now optimize by alpha
+            master_model.batch_provider.set_source(sess, self.params[master_model].batch_size, 2)
 
-            #loss_b4_sesop = sess.run(master_model.loss() ,feed_dict={inputs: full_data, labels: full_labels})
-            feed_dict = master_model.get_shared_feed(sess, self.params[master_model].sesop_batch_size, True)
-            assert (len(feed_dict) == 2 * len(e.models))
-
-            self.params[master_model].cg.minimize(sess, feed_dict=feed_dict)
-            sess.run(after_sesop)
-
-            #loss_after_sesop = sess.run(master_model.loss(), feed_dict={inputs: full_data, labels: full_labels})
+            feed_dicts = []
+            for i in range(master_model.experiment.sesop_batch_mult):
+                feed_dict = master_model.get_shared_feed(sess, self.batch_size, 2, worker_models)
+                feed_dicts.append(feed_dict)
 
 
-            #print 'loss_b4_sesop - loss_after_sesop = ' + str(loss_b4_sesop - loss_after_sesop)
-            #assert(False)
-            #master_model.log_loss_b4_minus_after(sess, loss_b4_sesop - loss_after_sesop)
+            losses[e] = sess.run([m.loss() for m in e.models], feed_dict=feed_dicts[0])
+
+            loss_b4_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size, train_dataset_size=self.train_dataset_size)
+
+            print 'loss before sesop = ' + str(sess.run(master_model.loss(), feed_dict=feed_dicts[0]))
+            self.dump_debug(sess, master_model, feed_dicts[0], 'loss_before_sesop')
 
 
-            #master_model.dump_to_tensorboard(sess)
-            #master_model.summary_mgr.writer.flush()
-            #Update the history:
+
+            #loss_callback=debug_loss_callback
+            def debug_loss_callback(loss, grad):
+                print 'loss = ' + str(loss)
+
+            sess.run(master_model.stage)
+
+            print 'size of subspace = ' + str(len(self.params[master_model].cg_var_list))
+            self.params[master_model].cg.minimize(sess, feed_dicts=feed_dicts)
+
+            loss_after_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size,
+                                                             train_dataset_size=self.train_dataset_size)
+
+            e.add_debug_sesop(0, loss_b4_sesop, loss_after_sesop)
+
+            sess.run(after_sesop) #after this 'snapshot' is updated with the result of the sesop
+
+            sess.run(zero_alpha)
 
 
             #Now send the results back to the workers
             for worker in worker_models:
                 #TODO: worker.assert_have_no_alpa_or_history_or_replicas()
-                sess.run(worker.pull_from_master_op())
+                sess.run(worker.pull_from_master_op()) #assign(var, snapshot)
+
+            e.add_debug_sesop_on_sesop_batch(0, losses[e], sess.run(master_model.loss(), feed_dict=feed_dicts[0]))
+
+            losses[e] = sess.run([m.loss() for m in e.models], feed_dict=feed_dicts[0])
+            print 'loss after sesop = ' + str(losses[e])
+
+            self.dump_debug(sess, master_model, feed_dicts[0], 'master')
+            if len(worker_models) > 0:
+                self.dump_debug(sess, worker_models[0], feed_dicts[0], 'worker')
+
+            # master_weights = master_model.hvar_mgr.all_trainable_weights()
+            # worker_weights = worker_models[0].hvar_mgr.all_trainable_weights()
+            # print 'master_weights = ' + str(sess.run(master_weights[0]))
+            # print 'worker_weights = ' + str(sess.run(worker_weights[0]))
 
 
-            losses[e] = sess.run([m.loss() for m in e.models], feed_dict=feed_dict)
-
+            master_model.batch_provider.set_source(sess, self.batch_size, 1)
+            sess.run(master_model.stage)
 
         self.sesop_runs += 1
         self.curr_iter += 1
 
-        return losses
+        return None
 

@@ -28,7 +28,8 @@ class Experiment:
         'optimizer': 'sgd',
         'num_residual_units': 9,
         'fixed_dropout_during_sesop': False,
-        'fixed_bn_during_sesop': False
+        'fixed_bn_during_sesop': False,
+        'sesop_batch_mult' : 1
     }
 
     FLAGS_ALIASES = {'batch_size' : 'b'}
@@ -73,14 +74,17 @@ class Experiment:
         self.flags = flags
 
         self.bs, self.sesop_batch_size = flags['b'], flags['sesop_batch_size']
+        self.sesop_batch_mult = self.getFlagValue('sesop_batch_mult')
+
         self.models = []
         self.results = []
 
         if self.getFlagValue('model') == 'simple':
-            self.train_dataset_size = 5000
-            self.test_dataset_size = 5000
+            self.train_dataset_size = self.getFlagValue('dataset_size')
+            self.test_dataset_size = self.train_dataset_size
         elif self.getFlagValue('model') == 'cifar10':
-            self.train_dataset_size = 50000
+            self.train_dataset_size = 40000
+            self.sesop_dataset_size = 10000
             self.test_dataset_size = 10000
         else:
             assert (False)
@@ -106,9 +110,9 @@ class Experiment:
     def init_models(self, gpu, batch_providers):
         assert(len(batch_providers) >= self.getFlagValue('nodes'))
         #build the models and connect it to batch_providers
-        with tf.device('/gpu:' + str(gpu % 4)):
-            with tf.variable_scope("experiment_models") as scope:
-                for i in range(self.getFlagValue('nodes')):
+        with tf.variable_scope("experiment_models") as scope:
+            for i in range(self.getFlagValue('nodes')):
+                with tf.device('/gpu:' + str(gpu % 4)):
                     #experiment, batch_provider, node_id
                     model = None
                     if self.getFlagValue('model') == 'simple':
@@ -124,6 +128,9 @@ class Experiment:
                     #scope.reuse_variables()
 
                     self.results.append(experiment_results.ExperimentResults(self.buildLabel(), self.flags))
+                    gpu += 1
+
+        return gpu
 
 
     def getDatasetSize(self):
@@ -160,6 +167,16 @@ class Experiment:
 
     def add_iteration_train_error(self, model_idx, err):
         self.results[model_idx].trainErrorPerItereation.append(err)
+
+    def add_debug_sesop(self, model_idx, before, after):
+        self.results[model_idx].debug_sesop_before.append(before)
+        self.results[model_idx].debug_sesop_after.append(after)
+
+    def add_debug_sesop_on_sesop_batch(self, model_idx, before, after):
+        self.results[model_idx].debug_sesop_on_sesop_batch_before.append(before)
+        self.results[model_idx].debug_sesop_on_sesop_batch_after.append(after)
+
+
 
     def add_train_error(self, model_idx, err):
         self.results[model_idx].trainError.append(err)

@@ -38,7 +38,7 @@ HParams = namedtuple('HParams',
 class ResNet(object):
   """ResNet model."""
 
-  def __init__(self, hps, images, labels, mode, init_conv_chanels_num=3, get_variable_func=tf.get_variable, hvar_mgr=None):
+  def __init__(self, hps, images, labels, mode, init_conv_chanels_num=3, get_variable_func=tf.get_variable, get_h_variable=None, hvar_mgr=None):
     """ResNet constructor.
 
     Args:
@@ -50,10 +50,13 @@ class ResNet(object):
     self.hvar_mgr = hvar_mgr
     self.init_conv_chanels_num = init_conv_chanels_num
     self.get_variable_func = get_variable_func
+    self.get_h_variable_func = get_h_variable
+
     self.hps = hps
     self._images = images
     self.labels = labels
     self.mode = mode
+
 
     self._extra_train_ops = []
 
@@ -83,6 +86,8 @@ class ResNet(object):
       res_func = self._bottleneck_residual
       filters = [16, 64, 128, 256]
     else:
+      self.res_layers = []
+
       res_func = self._residual
       filters = [16, 16, 32, 64]
       # Uncomment the following codes to use w28-10 wide residual network.
@@ -99,7 +104,7 @@ class ResNet(object):
       with tf.variable_scope('unit_1_%d' % i):
         x = res_func(x, filters[1], filters[1], self._stride_arr(1), False)
 
-    with tf.variable_scope('unit_2_0'):
+    with tf.variable_scope('unit_2_0'): #TODO: OOM
       x = res_func(x, filters[1], filters[2], self._stride_arr(strides[1]),
                    activate_before_residual[1])
     for i in six.moves.range(1, self.hps.num_residual_units):
@@ -125,8 +130,8 @@ class ResNet(object):
     with tf.variable_scope('costs'):
       xent = tf.nn.softmax_cross_entropy_with_logits(
           logits=logits, labels=self.labels)
-      self.cost = tf.reduce_mean(xent, name='xent')
-      self.cost += self._decay()
+      self.cost_before_decay = tf.reduce_mean(xent, name='xent')
+      self.cost = self.cost_before_decay + self._decay()
 
       tf.summary.scalar('cost', self.cost)
 
@@ -164,8 +169,9 @@ class ResNet(object):
         zip(grads, trainable_variables),
         global_step=self.global_step, name='train_step')
 
-    train_ops = [apply_op] + self._extra_train_ops #+ [tf.Print(self.lrn_rate, [self.global_step, self.lrn_rate], message='[global_step][lr] = ')]
+    train_ops = [apply_op] + self._extra_train_ops
     self.train_op = tf.group(*train_ops)
+
 
   # TODO(xpan): Consider batch_norm in contrib/layers/python/layers/layers.py
   def _batch_norm(self, name, x):
@@ -205,11 +211,11 @@ class ResNet(object):
         self._extra_train_ops.append(moving_averages.assign_moving_average(
             moving_variance, variance, 0.9))
       else:
-        mean = self.get_variable_func(
+        mean = tf.get_variable(
             'moving_mean', params_shape, tf.float32,
             initializer=tf.constant_initializer(0.0, tf.float32),
             trainable=False)
-        variance = self.get_variable_func(
+        variance = tf.get_variable(
             'moving_variance', params_shape, tf.float32,
             initializer=tf.constant_initializer(1.0, tf.float32),
             trainable=False)
@@ -221,6 +227,7 @@ class ResNet(object):
       y.set_shape(x.get_shape())
       return y
 
+  #x,160,320
   def _residual(self, x, in_filter, out_filter, stride,
                 activate_before_residual=False):
     """Residual unit with 2 sub layers."""
@@ -252,6 +259,8 @@ class ResNet(object):
       x += orig_x
 
     tf.logging.debug('image after unit %s', x.get_shape())
+
+    self.res_layers.append(x)
     return x
 
   def _bottleneck_residual(self, x, in_filter, out_filter, stride,
@@ -292,23 +301,69 @@ class ResNet(object):
   def _decay(self):
     """L2 weight decay loss."""
     costs = []
-    trainable_variables = self.hvar_mgr.all_trainable_weights()
+    trainable_variables = self.hvar_mgr.all_hvars
     for var in trainable_variables:
-      if var.op.name.find(r'DW') > 0:
-        costs.append(tf.nn.l2_loss(var))
+      if var.var.op.name.find(r'DW') > 0:
+        costs.append(tf.nn.l2_loss(var.out()))
         # tf.summary.histogram(var.op.name, var)
 
     return tf.multiply(self.hps.weight_decay_rate, tf.add_n(costs))
 
   def _conv(self, name, x, filter_size, in_filters, out_filters, strides):
     """Convolution."""
+    """
+    OOM: [128,160,33,33] = [batch, in_channels, in_height, in_width]
+
+  Given an input tensor of shape `[batch, in_height, in_width, in_channels]`
+  and a filter / kernel tensor of shape
+  `[filter_height, filter_width, in_channels, out_channels]`, this op
+  performs the following:
+
+  1. Flattens the filter to a 2-D matrix with shape
+     `[filter_height * filter_width * in_channels, output_channels]`.
+  2. Extracts image patches from the input tensor to form a *virtual*
+     tensor of shape `[batch, out_height, out_width, filter_height * filter_width * in_channels]`.
+
+  3. For each patch, right-multiplies the filter matrix and the image patch
+     vector.
+
+  In detail, with the default NHWC format,
+
+      output[b, i, j, k] =
+          sum_{di, dj, q} input[b, strides[1] * i + di, strides[2] * j + dj, q] *
+                          filter[di, dj, q, k]
+
+  Must have `strides[0] = strides[3] = 1`.  For the most common case of the same
+  horizontal and vertices strides, `strides = [1, stride, stride, 1]`.
+
+  Args:
+    input: A `Tensor`. Must be one of the following types: `half`, `float32`, `float64`.
+    filter: A `Tensor`. Must have the same type as `input`.
+    strides: A list of `ints`.
+      1-D of length 4.  The stride of the sliding window for each dimension
+      of `input`. Must be in the same order as the dimension specified with format.
+    padding: A `string` from: `"SAME", "VALID"`.
+      The type of padding algorithm to use.
+    use_cudnn_on_gpu: An optional `bool`. Defaults to `True`.
+    data_format: An optional `string` from: `"NHWC", "NCHW"`. Defaults to `"NHWC"`.
+      Specify the data format of the input and output data. With the
+      default format "NHWC", the data is stored in the order of:
+          [batch, in_height, in_width, in_channels].
+      Alternatively, the format could be "NCHW", the data storage order of:
+          [batch, in_channels, in_height, in_width].
+    name: A name for the operation (optional).
+
+  Returns:
+    A `Tensor`. Has the same type as `input`
+
+    """
     with tf.variable_scope(name):
       n = filter_size * filter_size * out_filters
       kernel = self.get_variable_func(
           'DW', [filter_size, filter_size, in_filters, out_filters],
           tf.float32, initializer=tf.random_normal_initializer(
               stddev=np.sqrt(2.0/n)))
-      return tf.nn.conv2d(x, kernel, strides, padding='SAME')
+      return tf.nn.conv2d(x, kernel, strides, padding='SAME', data_format='NHWC')
 
   def _relu(self, x, leakiness=0.0):
     """Relu, with optional leaky support."""

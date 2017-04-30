@@ -3,6 +3,8 @@ import tensorflow as tf
 from summary_manager import SummaryManager
 import numpy as np
 
+from tensorflow.python.ops.control_flow_ops import with_dependencies
+
 from SharedVariablesManager import SharedVariablesManager
 
 class HVar:
@@ -56,16 +58,6 @@ class HVar:
             #tf.get_variable(initializer=var.initialized_value(), name='snapshot')
         self.replicas = SharedVariablesManager.get_replicas(self.model, var)
 
-        #print 'self.last_snapshot = ' + str(self.last_snapshot.name)
-        #node 0 also holds 'nodes - 1' variables. 1 for each other node:
-        #the last n-1 replicas are "nodes" replicas.
-        # with tf.variable_scope('replicas'):
-        #     for i in range(self.nodes - 1):
-        #         #Note we use tf.getVariable, so thes variables are shared between all nodes.
-        #         self.replicas.append(tf.get_variable(initializer=np.zeros(var.get_shape(), dtype=np.float32), \
-        #                                                 dtype=var.dtype.base_dtype, name='replica_' + str(i)))
-                #print 'replica: ' + str(self.replicas[-1].name)
-                #print 'self.last_snapshot = ' + str(self.last_snapshot.name)
 
         if self.node_id == 0:
             with tf.name_scope('history'):
@@ -77,14 +69,17 @@ class HVar:
                 for i in range(self.hSize):
                     self.history_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_h_' + str(i)))
                         #SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_h', self.history_aplha[-1]))
+                    tf.summary.histogram('alphas_h', self.history_aplha[-1])
 
             with tf.name_scope('replicas_aplha'):
                 for i in range(self.nodes - 1):
                     self.replicas_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_n_' + str(i)))
                         #SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_n', self.replicas_aplha[-1]))
+                    tf.summary.histogram('alpha_n_', self.replicas_aplha[-1])
 
         self.zero_alpha = None
         if self.node_id == 0:
+            self.zero_alpha_op()
             self.update_history_op()
             for i in range(self.hSize):
                 self.update_history_op() #make sure all ops are created
@@ -103,16 +98,21 @@ class HVar:
         with tf.name_scope(self.name + '_out'):
             #return an affine combination of the history vectors
             #and a dictonary to add to feed_dict.
-            self.o = self.var
+
 
             if self.node_id == 0:
+                terms = []
                 for r, a in zip(self.history, self.history_aplha):
-                    self.o += r*a
+                    terms.append(r * a)
 
                 for r, a in zip(self.replicas, self.replicas_aplha):
-                    self.o += r*a
+                    terms.append(r * a)
 
-            return self.o
+                self.o = tf.add_n([self.var] + terms)
+                return self.o
+
+            self.o = self.var
+            return self.var
 
     # create an op that puts var of this node into its replica
     #Called before sesop!
@@ -140,7 +140,12 @@ class HVar:
         assert (self.node_id == 0)
         if self.hSize == 0:
             if 0 not in self.op_cache:
-                self.op_cache[0] = [tf.no_op(), tf.no_op()]
+                if self.nodes > 1:
+                    update_var_op = tf.assign(self.var, self.out())
+                    update_snapshot_op = tf.assign(self.last_snapshot, self.out())
+                    self.op_cache[0] = [tf.no_op(), [update_var_op, update_snapshot_op]]
+                else:
+                    self.op_cache[0] = [tf.no_op(), tf.no_op()]
             return self.op_cache[0]
 
         if self.next_idx not in self.op_cache:
@@ -150,23 +155,28 @@ class HVar:
 
                 #first we update the original variable to the sesop result
                 update_var_op = tf.assign(self.var, self.out())
-                with tf.control_dependencies([update_var_op]):
-                    #now we update the history (self.var contain the sesop result):
-                    update_history_op = tf.assign(self.history[self.next_idx], self.var - self.last_snapshot)
-                    with tf.control_dependencies([update_history_op]):
-                        #now we update the last_snapshot to be the sesop result
-                        update_snapshot_op = tf.assign(self.last_snapshot, self.var)
-                        with tf.control_dependencies([update_snapshot_op]):
-                            #finally we reset all the alphas (infact we can take this out of the dependecy)
-                            #as it only affect self.out()
-                            reset_alpha_op = self.zero_alpha_op()
-                            self.op_cache[self.next_idx].append(tf.group(update_history_op, update_var_op, update_snapshot_op, reset_alpha_op))
+                #update_var_op = tf.Print(input_=update_var_op, data=[self.var], message='First stage')
+
+                # now we update the history (self.var contain the sesop result):
+                update_history_op = with_dependencies([update_var_op], tf.assign(self.history[self.next_idx], update_var_op - self.last_snapshot))
+                #update_history_op = tf.Print(input_=update_history_op, data=[self.var], message='Second stage')
+
+                # now we update the last_snapshot to be the sesop result
+                update_snapshot_op = with_dependencies([update_history_op], tf.assign(self.last_snapshot, update_var_op))
+
+
+                # self.op_cache[self.next_idx].append(
+                #     [update_history_op, update_var_op, update_snapshot_op, reset_alpha_op])
+                self.op_cache[self.next_idx].append(
+                     [update_var_op, update_history_op, update_snapshot_op])
 
         old_idx = self.next_idx
         self.next_idx = (self.next_idx + 1)%self.hSize
 
         return self.op_cache[old_idx]
 
+    # finally we reset all the alphas (infact we can take this out of the dependecy)
+    # as it only affect self.out()
     def zero_alpha_op(self):
         if self.zero_alpha is None:
             group_op = tf.no_op()

@@ -2,6 +2,7 @@
 
 import tensorflow as tf
 from seboost import SeboostOptimizer
+from StochasticCG import StochasticCGOptimizer
 from dataset_manager import DatasetManager
 from batch_provider import BatchProvider
 from model import Model
@@ -9,9 +10,9 @@ import experiments_manager
 import progressbar
 from experiment import Experiment
 from batch_provider import SimpleBatchProvider, CifarBatchProvider
-from cifar_input import build_input
 import numpy as np
 import tqdm
+import os
 
 class ExperimentRunner:
 
@@ -50,16 +51,16 @@ class ExperimentRunner:
         self.assert_all_experiments_has_same_flag('sesop_freq')
         self.assert_all_experiments_has_same_flag('sesop_batch_size')
         self.assert_all_experiments_has_same_flag('model')
+        self.assert_all_experiments_has_same_flag('hSize')
+        self.assert_all_experiments_has_same_flag('nodes')
 
-        self.bs = experiments[0].getFlagValue('b')
         self.epochs = experiments[0].getFlagValue('epochs')
-        self.dataset_size = experiments[0].getFlagValue('dataset_size')
         self.input_dim = experiments[0].getFlagValue('dim')
         self.output_dim = experiments[0].getFlagValue('output_dim')
 
         self.batch_size = experiments[0].getFlagValue('b')
         self.sesop_batch_size = experiments[0].getFlagValue('sesop_batch_size')
-        self.careless_batch_size = 100
+        self.careless_batch_size = self.batch_size
 
         self.train_dataset_size, self.test_dataset_size = experiments[0].getDatasetSize()
 
@@ -103,21 +104,21 @@ class ExperimentRunner:
 
         #Every node needs to have a different batch provider to make sure they see diff data
         for i in range(max_nodes):
-            with tf.device('/cpu:' + str(i%12)):
+            with tf.device('/cpu:*'):
                 if model == 'simple':
-                    with tf.variable_scope('simple_batch_provider_' + str(i)) as scope:
+                    with tf.name_scope('simple_batch_provider_' + str(i)) as scope:
                         self.batch_providers.append(
                             SimpleBatchProvider(input_dim=self.input_dim, output_dim=self.output_dim, \
-                                                dataset_size=self.dataset_size, \
-                                                batch_sizes=[self.bs, self.sesop_batch_size]))
-                        scope.reuse_variables()
+                                                dataset_size=self.train_dataset_size, \
+                                                batch_sizes=[self.batch_size]))
+                        #scope.reuse_variables()
 
                 elif model == 'mnist':
                     assert (False)
                 elif model == 'cifar10':
                     with tf.variable_scope('cifar10_batch_provider_' + str(i)) as scope:
                         self.batch_providers.append(
-                            CifarBatchProvider(batch_sizes=[self.bs, self.sesop_batch_size, self.careless_batch_size], \
+                            CifarBatchProvider(batch_sizes=[self.batch_size], \
                                                train_threads=4*len(self.experiments)))
 
         return self.batch_providers
@@ -145,32 +146,46 @@ class ExperimentRunner:
         config.allow_soft_placement = True
 
         #'grpc://' + tf_server
-        # with tf.Session('grpc://' + tf_server, config=config) as sess:
-        with tf.Session(target='grpc://localhost:2222', config=config) as sess:
+        with tf.Session(config=config) as sess:
+        #with tf.Session(target='grpc://localhost:2222', config=config) as sess:
 
+            # Let your BUILD target depend on "//tensorflow/python/debug:debug_py"
+            # from tensorflow.python import debug as tf_debug
+            #
+            # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+            # sess.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
+
+            pid = os.getpid()
             print 'building models (first e = '  + str(self.experiments[0]) + ')'
-            i = 0
+            gpu = 0
             expr_num = 0
 
             self.init_batch_providers(sess)
 
             for e in tqdm.tqdm(self.experiments):
             #for e in self.experiments:
-                with tf.variable_scope('experiment_' + str(expr_num)):
-                    e.init_models(i%4, self.batch_providers)
-                i += 1
+                with tf.variable_scope('pid_' + str(pid) + '_experiment_' + str(expr_num)):
+                    gpu += e.init_models(gpu, self.batch_providers)
                 expr_num += 1
 
 
             print 'Setting up optimizers'
             with tf.name_scope('seboost'):
                 optimizer = SeboostOptimizer(self.experiments)
+            # with tf.name_scope('stochastic_cg'):
+            #     optimizer = StochasticCGOptimizer(self.experiments[0].models[0].loss(), self.experiments[0].models[0].hvar_mgr.all_trainable_weights(), \
+            #                                       self.experiments[0].models[0].get_extra_train_ops(), 10)
+            #     print sess
+            #     optimizer.init_ops(sess)
 
             print 'Write graph into tensorboard'
             writer = tf.summary.FileWriter('/tmp/generated_data/' + '1')
             writer.add_graph(sess.graph)
 
-            exit()
+            merged = tf.summary.merge_all()
+            optimizer.writer = writer
+            optimizer.merged = merged
+
             print 'init vars'
             sess.run(tf.local_variables_initializer())
             sess.run(tf.global_variables_initializer())
@@ -198,6 +213,10 @@ class ExperimentRunner:
                 for m in e.models:
                     sess.run(m.stage)
 
+            print 'pulling initial weights from master'
+            for worker in e.models[1:]:
+                sess.run(worker.pull_from_master_op())
+
             # print 'Write graph into tensorboard'
             # writer = tf.summary.FileWriter('/tmp/generated_data/' + '1')
             # writer.add_graph(sess.graph)
@@ -211,6 +230,11 @@ class ExperimentRunner:
 
                 # run 20 steps (full batch optimization to start with)
 
+                # master_weights = models[0].hvar_mgr.all_trainable_weights()
+                # worker_weights = models[1].hvar_mgr.all_trainable_weights()
+                # print 'master_weights = ' + str(sess.run(master_weights[0]))
+                # print 'worker_weights = ' + str(sess.run(worker_weights[0]))
+
                 print 'Computing train and test Accuracy'
                 train_error, test_error = np.zeros(len(models)), np.zeros(len(models))
 
@@ -218,16 +242,26 @@ class ExperimentRunner:
                 #assert (self.train_dataset_size % self.careless_batch_size == 0)
                 #assert (self.test_dataset_size % self.careless_batch_size == 0)
                 for m in models:
-                    m.batch_provider.set_source(sess, self.careless_batch_size, True)
-                for i in tqdm.tqdm(range((self.train_dataset_size/20) / self.careless_batch_size)):
+                    m.batch_provider.set_source(sess, self.careless_batch_size, 1)
+                for i in tqdm.tqdm(range((self.train_dataset_size/1) / self.careless_batch_size)):
                     train_error +=  np.array(sess.run(accuracies + stages)[:len(accuracies)])
-                train_error /= float((self.train_dataset_size/20) / self.careless_batch_size)
+                train_error /= float((self.train_dataset_size/1) / self.careless_batch_size)
                 print 'Train Accuracy = ' + str(train_error)
 
                 for m in models:
-                    m.batch_provider.set_source(sess, self.careless_batch_size, False)
+                    m.batch_provider.set_source(sess, self.careless_batch_size, 0)
                 for i in tqdm.tqdm(range(self.test_dataset_size / self.careless_batch_size)):
-                    test_error += np.array(sess.run(accuracies + stages)[:len(accuracies)])
+
+                    #steps = {'accuracies' : accuracies, 'stages' : stages, 'merged' : merged}
+                    steps = {'accuracies': accuracies, 'stages': stages}
+                    steps = sess.run(steps)
+
+                    # writer.add_summary(steps['merged'], epoch*(self.test_dataset_size / self.careless_batch_size) + i)
+                    # writer.flush()
+
+                    test_error += np.array(steps['accuracies'])
+
+                    #test_error += np.array(sess.run(accuracies + stages)[:len(accuracies)])
                 test_error /= float(self.test_dataset_size / self.careless_batch_size)
                 print 'Test Accuracy = ' + str(test_error)
 
@@ -237,15 +271,31 @@ class ExperimentRunner:
                 for m in tqdm.tqdm(models):
                     m.dump_checkpoint(sess)
 
+
                 print 'Start training Epoch #' + str([e.get_number_of_ran_epochs() for e in self.experiments])
                 print 'Training'
+
+                # for m in models:
+                #     m.batch_provider.set_source(sess, self.batch_size, 1)
+                # for i in tqdm.tqdm(range(self.train_dataset_size/ self.batch_size)):
+                #     optimizer.run_iter(sess)
+                #     for e in self.experiments:
+                #         for model_idx in range(len(e.models)):
+                #             e.add_iteration_train_error(model_idx, optimizer.losses[-1])
+
+                for m in models:
+                    m.batch_provider.set_source(sess, self.batch_size, 1)
                 optimizer.run_epoch(sess=sess, stages=stages)
 
                 #dump eperiments before continue to next round!
 
                 # writer.flush()
+
+            print '########### request_stop ###########'
             coord.request_stop()
+            print '########### join ###########'
             coord.join(threads)
+            print '########### after join ###########'
 
 
 import experiment
@@ -266,7 +316,8 @@ def find_cifar_baseline():
                 'b': 128,
                 'lr': lr,
                 'sesop_batch_size': 1000,
-                'sesop_freq': (1.0 / 50000.0),  # sesop every 1 epochs (no sesop)
+                'sesop_batch_mult': 1,
+                'sesop_freq': 2e-05,  # sesop every 1 epochs (no sesop)
                 'hSize': 0,
                 'epochs': 100,
                 # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
@@ -286,7 +337,9 @@ def find_cifar_multinode(n):
     experiments = {}
     #for lr in [0.4, 0.3, 0.2, 0.1, 0.05, 0.025, 0.025/2]:
     #for lr in [0.2, 0.1, 0.05, 0.025]:
-    for lr in [0.2]:
+    #0.101 CG
+    #0.1 NG
+    for lr in [0.101]:
     #for lr in [0.3, 0.4, 0.5, 0.6]:
     #for lr in [0.7, 0.8, 0.9, 1.0]:
     #for lr in [1.1, 1.2, 1.3, 1.4]:
@@ -296,13 +349,16 @@ def find_cifar_multinode(n):
                 'model': 'cifar10',
                 'b': 128,
                 'lr': lr,
-                'sesop_batch_size': 1000,
-                'sesop_freq': (1.0 / 2.0),  # sesop every 1 epochs (no sesop)
-                'hSize': 1,
+                'sesop_batch_size' : 0,
+                'sesop_batch_mult': 1,
+                'sesop_freq': 1.0/390.0, #(1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            # SV DEBUG
+                'hSize': 0,
                 'epochs': 100,
                 # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
                 'nodes': n,
-                'num_residual_units': 1,
+            #SV DEBUG
+                'num_residual_units': 4,
                 # Not relevant!
                 'dim': None,
                 'output_dim': None,
@@ -373,8 +429,163 @@ def run_cifar_expr():
 
     return experiments
 
-#experiments = find_cifar_baseline()
-#experiments = find_cifar_history()
-experiments = find_cifar_multinode(2)
-runner = ExperimentRunner(experiments, force_rerun=True)
-runner.run()
+def simple():
+    experiments = {}
+    for lr in [0.1]:
+        experiments[len(experiments)] = experiment.Experiment(
+        {
+            'model': 'simple',
+            'b': 100,
+            'lr': lr,
+            'sesop_batch_size': 0,
+            'sesop_batch_mult': 1,
+            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'hSize': 0,
+            'nodes': 1,
+            'dim': 10,
+            'output_dim': 1,
+            'dataset_size': 5000,
+            'hidden_layers_num': 1,
+            'hidden_layers_size': 100,
+
+
+            'epochs': 30,
+            'num_residual_units': None
+
+
+        })
+    return experiments
+
+
+def find_simple_baseline():
+    experiments = {}
+    for lr in [1, 0.5, 0.1, 0.05, 0.01]:
+        experiments[len(experiments)] = experiment.Experiment(
+        {
+            'model': 'simple',
+            'b': 100,
+            'lr': lr,
+            'sesop_batch_size': 0,
+            'sesop_batch_mult': 1,
+            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'hSize': 0,
+            'nodes': 1,
+            'dim': 10,
+            'output_dim': 1,
+            'dataset_size': 5000,
+            'hidden_layers_num': 3,
+            'hidden_layers_size': 100,
+
+
+            'epochs': 30,
+            'num_residual_units': None
+
+
+        })
+    return experiments
+
+def simple_with_history_baseline(h, sesop_batch_mult):
+    experiments = {}
+    experiments[len(experiments)] = experiment.Experiment(
+        {
+            'model': 'simple',
+            'b': 100,
+            'lr': 0.05,
+            'sesop_batch_size': 0,
+            'sesop_batch_mult': sesop_batch_mult,
+            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'hSize': h,
+            'nodes': 1,
+            'dim': 10,
+            'output_dim': 1,
+            'dataset_size': 5000,
+            'hidden_layers_num': 3,
+            'hidden_layers_size': 100,
+
+
+            'epochs': 30,
+            'num_residual_units': None
+
+
+    })
+    return experiments
+
+def simple_with_history_bi_batch_size_baseline(h):
+    experiments = {}
+    experiments[len(experiments)] = experiment.Experiment(
+        {
+            'model': 'simple',
+            'b': 100,
+            'lr': 0.05,
+            'sesop_batch_size': 0,
+            'sesop_batch_mult': 8,
+            #'sesop_freq': 1.0 / 38.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'sesop_freq': 1.0 / 50.0,
+            'hSize': h,
+            'nodes': 1,
+            'dim': 10,
+            'output_dim': 1,
+            'dataset_size': 5000,
+            'hidden_layers_num': 3,
+            'hidden_layers_size': 100,
+
+
+            'epochs': 30,
+            'num_residual_units': None
+
+
+    })
+    return experiments
+
+def simple_multinode(n, sesop_batch_mult):
+    experiments = {}
+    experiments[len(experiments)] = experiment.Experiment(
+        {
+            'model': 'simple',
+            'b': 100,
+            'lr': 0.05,
+            'sesop_batch_size': 0,
+            'sesop_batch_mult': sesop_batch_mult,
+            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'hSize': 0,
+            'nodes': n,
+            'dim': 10,
+            'output_dim': 1,
+            'dataset_size': 5000,
+            'hidden_layers_num': 3,
+            'hidden_layers_size': 100,
+
+
+            'epochs': 30,
+            'num_residual_units': None
+
+
+    })
+    return experiments
+
+def simple_multinode_with_history(n, h, sesop_batch_mult):
+    experiments = {}
+    experiments[len(experiments)] = experiment.Experiment(
+        {
+            'model': 'simple',
+            'b': 100,
+            'lr': 0.05,
+            'sesop_batch_size': 0,
+            'sesop_batch_mult': sesop_batch_mult,
+            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'hSize': h,
+            'nodes': n,
+            'dim': 10,
+            'output_dim': 1,
+            'dataset_size': 5000,
+            'hidden_layers_num': 3,
+            'hidden_layers_size': 100,
+
+
+            'epochs': 30,
+            'num_residual_units': None
+
+
+    })
+    return experiments
+#TODO: add test loss

@@ -7,7 +7,7 @@ def check_create_dir(path):
 
 
 def printInfo(msg):
-    pass
+    print msg
 
 
 class Singleton(type):

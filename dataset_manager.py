@@ -16,9 +16,9 @@ def fc_layer(input, n_in, n_out):
 
 
 def build_model(x, dim, out_dim):
-    layers = [fc_layer(x, dim, 2*dim)]
+    layers = [fc_layer(x, dim, 200*dim)]
     for i in range(1):
-        layers.append(fc_layer(layers[-1], 2*dim, dim))
+        layers.append(fc_layer(layers[-1], 200*dim, dim))
     layers.append(fc_layer(layers[-1], dim, out_dim))
     model_out = layers[-1]
 
@@ -30,8 +30,23 @@ def generate_random_data(input_dim, output_dim, n):
     cov = np.random.rand(input_dim, input_dim)
     cov = np.dot(cov, cov.transpose())
 
-    training_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
-    testing_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
+    #Make the problem harder:
+    for i in range(input_dim ** 2):
+        i = np.random.randint(input_dim)
+        j = i
+        while j == i:
+            j = np.random.randint(input_dim)
+
+        cov[i][j] = 0
+
+
+
+    #training_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
+    #testing_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
+
+    #SV DEBUG (this is to make sure we can overfit the data)
+    training_data = np.random.randn(n, input_dim)
+    testing_data = np.random.randn(n, input_dim)
 
     with tf.name_scope('generating_data'):
         x = tf.placeholder(tf.float32, shape=[None, input_dim], name='x')
@@ -55,7 +70,7 @@ def generate_random_data(input_dim, output_dim, n):
 
 
 class DatasetManager:
-    BASE_PATH = '/tmp/generated_data/DatasetManager/'
+    BASE_PATH = '/home/shai/DatasetManager/'
 
     def __init__(self):
         #make sure BASE_PATH exists
