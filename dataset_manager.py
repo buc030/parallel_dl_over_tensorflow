@@ -3,11 +3,14 @@ import numpy as np
 import pickle
 import os
 
-def fc_layer(input, n_in, n_out):
+def fc_layer(input, n_in, n_out, activation=True):
     with tf.name_scope('FC'):
         W = tf.Variable(tf.random_normal([n_in, n_out]), name='W')
         b = tf.Variable(tf.zeros([n_out]), name='b')
         a = tf.matmul(input, W) + b
+
+    if activation == False:
+        return a
 
     out = tf.nn.tanh(a)
 
@@ -16,10 +19,10 @@ def fc_layer(input, n_in, n_out):
 
 
 def build_model(x, dim, out_dim):
-    layers = [fc_layer(x, dim, 200*dim)]
+    layers = [fc_layer(x, dim, 8*dim)]
     for i in range(1):
-        layers.append(fc_layer(layers[-1], 200*dim, dim))
-    layers.append(fc_layer(layers[-1], dim, out_dim))
+        layers.append(fc_layer(layers[-1], 8*dim, 8*dim))
+    layers.append(fc_layer(layers[-1], 8*dim, out_dim, False))
     model_out = layers[-1]
 
     return model_out
@@ -27,17 +30,19 @@ def build_model(x, dim, out_dim):
 #def zero_random_matrix_value(cov):
 
 def generate_random_data(input_dim, output_dim, n):
-    cov = np.random.rand(input_dim, input_dim)
-    cov = np.dot(cov, cov.transpose())
 
-    #Make the problem harder:
-    for i in range(input_dim ** 2):
-        i = np.random.randint(input_dim)
-        j = i
-        while j == i:
-            j = np.random.randint(input_dim)
-
-        cov[i][j] = 0
+    #SV DEBUG
+    # cov = np.random.rand(input_dim, input_dim)
+    # cov = np.dot(cov, cov.transpose())
+    #
+    # #Make the problem harder:
+    # for i in range(input_dim ** 2):
+    #     i = np.random.randint(input_dim)
+    #     j = i
+    #     while j == i:
+    #         j = np.random.randint(input_dim)
+    #
+    #     cov[i][j] = 0
 
 
 
@@ -82,11 +87,13 @@ class DatasetManager:
                     raise
     def get_random_data(self, input_dim, output_dim, n):
         #if data is already there simply take it
-        try:
-            with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_inputdim_' + str(input_dim) + '_outputdim_' + str(output_dim), 'rb') as f:
-                return pickle.load(f)
-        except:
-            pass
+
+        #SV DEBUG (always re create the data!)
+        # try:
+        #     with open(DatasetManager.BASE_PATH + 'random_' + str(n) + '_inputdim_' + str(input_dim) + '_outputdim_' + str(output_dim), 'rb') as f:
+        #         return pickle.load(f)
+        # except:
+        #     pass
 
         #otherwise take it and dump it for next times
         data = generate_random_data(input_dim, output_dim, n)

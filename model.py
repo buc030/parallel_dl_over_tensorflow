@@ -9,15 +9,17 @@ from utils import check_create_dir
 from tensorflow.python.ops import data_flow_ops
 
 class FCLayer:
-    def __init__(self, input, n_in, n_out, model, prefix):
+    def __init__(self, input, n_in, n_out, model, prefix, activation=True):
         with tf.variable_scope(prefix):
             #print 'prefix = ' + str(prefix)
             self.W = model.hvar_mgr.create_var(tf.Variable(tf.random_normal([n_in, n_out]), name='W'))
 
             self.b = model.hvar_mgr.create_var(tf.Variable(tf.zeros([n_out]), name='b'))
             a = tf.matmul(input, self.W.out()) + self.b.out()
-
-            self.out = tf.nn.tanh(a)
+            if activation == False:
+                self.out = a
+            else:
+                self.out = tf.nn.tanh(a)
 
     def print_params(self, sess):
         print 'W = ' + str(sess.run(self.W.var))
@@ -228,9 +230,11 @@ class SimpleModel(Model):
         with tf.variable_scope('model_' + str(self.node_id)):
             self.layers = []
             self.layers.append(FCLayer(self.input, input_dim, hidden_layers_size, self, 'FC_'  + str(len(self.layers))))
+
             for i in range(hidden_layers_num):
                 self.layers.append(FCLayer(self.layers[-1].out, hidden_layers_size, hidden_layers_size, self, 'FC_' + str(len(self.layers))))
-            self.layers.append(FCLayer(self.layers[-1].out, hidden_layers_size, 1, self, 'FC_' + str(len(self.layers))))
+
+            self.layers.append(FCLayer(self.layers[-1].out, hidden_layers_size, output_dim, self, 'FC_' + str(len(self.layers)), False))
 
             self.model_out = self.layers[-1].out
 

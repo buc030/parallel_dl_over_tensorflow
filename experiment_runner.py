@@ -111,7 +111,6 @@ class ExperimentRunner:
                             SimpleBatchProvider(input_dim=self.input_dim, output_dim=self.output_dim, \
                                                 dataset_size=self.train_dataset_size, \
                                                 batch_sizes=[self.batch_size]))
-                        #scope.reuse_variables()
 
                 elif model == 'mnist':
                     assert (False)
@@ -139,7 +138,7 @@ class ExperimentRunner:
             return
 
         tf.reset_default_graph()
-        tf.get_default_graph()._unsafe_unfinalize()
+
 
         config = tf.ConfigProto()
         # config.gpu_options.allow_growth = True
@@ -163,7 +162,6 @@ class ExperimentRunner:
             self.init_batch_providers(sess)
 
             for e in tqdm.tqdm(self.experiments):
-            #for e in self.experiments:
                 with tf.variable_scope('pid_' + str(pid) + '_experiment_' + str(expr_num)):
                     gpu += e.init_models(gpu, self.batch_providers)
                 expr_num += 1
@@ -431,7 +429,7 @@ def run_cifar_expr():
 
 def simple():
     experiments = {}
-    for lr in [0.1]:
+    for lr in [0.001]:
         experiments[len(experiments)] = experiment.Experiment(
         {
             'model': 'simple',
@@ -446,7 +444,7 @@ def simple():
             'output_dim': 1,
             'dataset_size': 5000,
             'hidden_layers_num': 1,
-            'hidden_layers_size': 100,
+            'hidden_layers_size': 10,
 
 
             'epochs': 30,
