@@ -10,39 +10,144 @@ import utils
 from tensorflow.python.ops import data_flow_ops
 from tf_utils import StackedBatches
 import numpy as np
+import os
+import threading
+
+
 
 """
-Every subclass need to implment
-        self.train_pipes = {}
-        self.test_pipes = {}
-
+This class manages the the background threads needed to fill
+    a queue full of data.
 """
-class BatchProvider(object):
-    def __init__(self, batch_sizes):
+class CustomRunner(object):
 
-        self.batch_sizes = batch_sizes
+    def set_data_source(self, sess, data_source_idx):
+        sess.run(self.set_data_source_op[data_source_idx])
+
+    def get_inputs(self):
+        images_batch, labels_batch = self.curr_queue.dequeue_many(self.batch_size)
+        return images_batch, labels_batch
+
+    def __init__(self, train_features, train_labels, test_features, test_labels, batch_size):
+        self.train_features = train_features
+        self.train_labels = train_labels
+        self.test_features = test_features
+        self.test_labels = test_labels
+        self.batch_size = batch_size
+        self.dim = self.train_features.shape[1]
+
+        self.label_dim = self.train_labels.shape[1]
+
+        self.train_dataX = tf.placeholder(dtype=tf.float32, shape=[None, self.dim])
+        self.train_dataY = tf.placeholder(dtype=tf.float32, shape=[None, self.label_dim])
+
+        self.test_dataX = tf.placeholder(dtype=tf.float32, shape=[None, self.dim])
+        self.test_dataY = tf.placeholder(dtype=tf.float32, shape=[None, self.label_dim])
+
+        # The actual queue of data. The queue contains a vector for
+        # the mnist features, and a scalar label.
+        self.train_queue = tf.RandomShuffleQueue(shapes=[[self.dim], [self.label_dim]],
+                                                 dtypes=[tf.float32, tf.float32],
+                                                 capacity=2000,
+                                                 min_after_dequeue=1000)
+
+        self.test_queue = tf.FIFOQueue(shapes=[[self.dim], [self.label_dim]],
+                                       dtypes=[tf.float32, tf.float32],
+                                       capacity=2000)
+
+        #0 mean test, 1 mean train
+        self.data_source_idx = tf.Variable(tf.cast(1, tf.int32), trainable=False, name='data_source_idx')
+        self.set_data_source_op = [tf.assign(self.data_source_idx, 0), tf.assign(self.data_source_idx, 1)]
+
+        self.curr_queue = tf.QueueBase.from_list(tf.cast(self.data_source_idx, tf.int32),
+                                       [self.test_queue, self.train_queue])
+
+        # The symbolic operation to add data to the queue
+        # we could do some preprocessing here or do it in numpy. In this example
+        # we do the scaling in numpy
+        self.train_enqueue_op = self.train_queue.enqueue_many([self.train_dataX, self.train_dataY])
+        self.test_enqueue_op = self.test_queue.enqueue_many([self.test_dataX, self.test_dataY])
 
 
-        self.set_source_ops = {}
-        for b in batch_sizes:
-            # 0 means test
-            # 1 means train
-            # 2 means sesop
-            for val in [0, 1, 2]:
-                self.set_source_ops[(b, val)] = [tf.assign(self.batch_size_chooser, b), tf.assign(self.is_train_chooser, val)]
 
-        self._batch = self.pipe
+    def train_data_iterator(self):
+        """ A simple data iterator """
+        batch_idx = 0
+        while True:
+            # shuffle labels and features
+            idxs = np.arange(0, len(self.train_features))
+            np.random.shuffle(idxs)
+            shuf_features = self.train_features[idxs]
+            shuf_labels = self.train_labels[idxs]
+            for batch_idx in range(0, len(self.train_features), self.batch_size):
+                images_batch = shuf_features[batch_idx:batch_idx + self.batch_size]
+                images_batch = images_batch.astype("float32")
+                labels_batch = shuf_labels[batch_idx:batch_idx + self.batch_size]
+                yield images_batch, labels_batch
+
+    def test_data_iterator(self):
+        """ A simple data iterator """
+        batch_idx = 0
+        while True:
+            for batch_idx in range(0, len(self.test_features), self.batch_size):
+                images_batch = self.test_features[batch_idx:batch_idx + self.batch_size]
+                images_batch = images_batch.astype("float32")
+                labels_batch = self.test_labels[batch_idx:batch_idx + self.batch_size]
+                yield images_batch, labels_batch
+
+    def train_thread_main(self, sess):
+        """
+        Function run on alternate thread. Basically, keep adding data to the queue.
+        """
+        for dataX, dataY in self.train_data_iterator():
+            sess.run(self.train_enqueue_op, feed_dict={self.train_dataX:dataX, self.train_dataY:dataY})
+
+    def test_thread_main(self, sess):
+        """
+        Function run on alternate thread. Basically, keep adding data to the queue.
+        """
+        for dataX, dataY in self.test_data_iterator():
+            sess.run(self.test_enqueue_op, feed_dict={self.test_dataX:dataX, self.test_dataY:dataY})
+
+    def start_threads(self, sess, n_train_threads=1, n_test_threads=1):
+        """ Start background threads to feed queue """
+        threads = []
+        for n in range(n_train_threads):
+            t = threading.Thread(target=self.train_thread_main, args=(sess,))
+            t.daemon = True # thread will close when parent quits
+            t.start()
+            threads.append(t)
+
+        for n in range(n_test_threads):
+            t = threading.Thread(target=self.test_thread_main, args=(sess,))
+            t.daemon = True # thread will close when parent quits
+            t.start()
+            threads.append(t)
+        return threads
+
+
+class SimpleBatchProvider:
+    def __init__(self, input_dim, output_dim, dataset_size, batch_size):
+        self.batch_size = batch_size
+        #return the same random data always.
+        self.training_data, self.testing_data, self.training_labels, self.testing_labels = \
+            DatasetManager().get_random_data(input_dim=input_dim, output_dim=output_dim, n=dataset_size)
+
+        self.custom_runner = CustomRunner(self.training_data, self.training_labels,
+                                          self.testing_data, self.testing_labels, batch_size)
+
+    def set_data_source(self, sess, data_name='train'):
+        if data_name == 'test':
+            self.custom_runner.set_data_source(sess, 0)
+        else:
+            assert (data_name == 'train')
+            self.custom_runner.set_data_source(sess, 1)
 
     def batch(self):
-        return self._batch
-
-    def set_source(self, sess, batch_size, is_training):
-        # Have the que runner do nothing by setting batch_size = -1
-        sess.run(self.set_source_ops[(batch_size, is_training)])
+        return self.custom_runner.get_inputs()
 
 
-
-class CifarBatchProvider(BatchProvider):
+class CifarBatchProvider:
     def __init__(self, batch_sizes, train_threads):
 
         #dataset, data_path, test_path, batch_size, max_batch_size, is_training, num_threads
@@ -60,75 +165,4 @@ class CifarBatchProvider(BatchProvider):
 
 
         super(CifarBatchProvider, self).__init__(batch_sizes)
-
-import os
-
-class SimpleBatchProvider(BatchProvider):
-
-    ##private
-    def create_train_pipeline(self, full_input, full_label, b):
-        pid = os.getpid()
-        #tensorflow is sharing these data structures between different runs!
-        input, label = tf.train.slice_input_producer([full_input, full_label], name='slicer_train', shuffle=True, seed=143)
-        batched_input, batched_labels = tf.train.batch([input, label], batch_size=b, name='batcher_train', capacity=16*max(self.batch_sizes), num_threads=4)
-
-        return batched_input, batched_labels
-
-    def create_test_pipeline(self, full_input, full_label, b):
-        pid = os.getpid()
-
-        input, label = tf.train.slice_input_producer([full_input, full_label], name='slicer_test', shuffle=False, seed=143)
-        batched_input, batched_labels = tf.train.batch([input, label], batch_size=b, name='batcher_test',
-                                                       capacity=max(self.batch_sizes))
-
-        return batched_input, batched_labels
-
-    ##public
-    #User has to say infornt what batch sizes does he wants to support!
-    def __init__(self, input_dim, output_dim, dataset_size, batch_sizes):
-        self.batch_sizes = batch_sizes
-        #return the same random data always.
-        self.training_data, self.testing_data, self.training_labels, self.testing_labels = \
-            DatasetManager().get_random_data(input_dim=input_dim, output_dim=output_dim, n=dataset_size)
-
-        # dataset, data_path, test_path, batch_size, max_batch_size, is_training, num_threads
-        self.batch_size_chooser = tf.Variable(batch_sizes[0], trainable=False, name='batch_size_chooser')
-
-        # 0 means test
-        # 1 means train
-        # 2 means sesop
-        self.is_train_chooser = tf.Variable(tf.cast(1, tf.int32), trainable=False, name='is_train_chooser')
-
-
-        with tf.name_scope('simple_data_provider'):
-            self.sub_init()
-
-        super(SimpleBatchProvider, self).__init__(batch_sizes)
-
-    def sub_init(self):
-        self.full_train_input = tf.Variable(name='train_dataset_x',
-                                                initial_value=self.training_data,
-                                                trainable=False)
-        self.full_train_labels = tf.Variable(name='train_dataset_y',
-                                                 initial_value=self.training_labels,
-                                                 trainable=False)
-
-        self.full_test_input = tf.Variable(name='test_dataset_x',
-                                               initial_value=self.testing_data,
-                                               trainable=False)
-
-        #print self.full_test_input
-        #print 'self.testing_data = ' + str(self.testing_data.shape)
-        self.full_test_labels = tf.Variable(name='test_dataset_y',
-                                                initial_value=self.testing_labels,
-                                                trainable=False)
-
-        self.test_pipe = self.create_test_pipeline(self.full_test_input, self.full_test_labels, self.batch_size_chooser)
-        self.train_pipe = self.create_train_pipeline(self.full_train_input, self.full_train_labels, self.batch_size_chooser)
-        #self.pipe = self.train_pipe
-        self.pipe = tf.cond(pred=tf.equal(self.is_train_chooser, 0), fn1=lambda : self.test_pipe, fn2=lambda : self.train_pipe)
-
-
-
-
 

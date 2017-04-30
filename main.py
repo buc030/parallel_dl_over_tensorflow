@@ -17,15 +17,15 @@ from experiment_runner import find_cifar_baseline, find_cifar_multinode, find_si
 experiments = {}
 
 ############ SIMPLE (first make sure we can overfit the data) #################
-experiments = simple()
-runner = ExperimentRunner(experiments, force_rerun=True)
-runner.run()
+# experiments = simple()
+# runner = ExperimentRunner(experiments, force_rerun=True)
+# runner.run()
 
 
 ############ BASELINE #################
-# experiments = find_simple_baseline()
-# runner = ExperimentRunner(experiments, force_rerun=True)
-# runner.run()
+experiments = find_simple_baseline()
+runner = ExperimentRunner(experiments, force_rerun=True)
+runner.run()
 
 
 

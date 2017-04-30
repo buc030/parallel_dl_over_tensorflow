@@ -1,11 +1,9 @@
 
 
 import tensorflow as tf
+from tensorflow.python.training.queue_runner_impl import QueueRunner
+
 from seboost import SeboostOptimizer
-from StochasticCG import StochasticCGOptimizer
-from dataset_manager import DatasetManager
-from batch_provider import BatchProvider
-from model import Model
 import experiments_manager
 import progressbar
 from experiment import Experiment
@@ -59,8 +57,6 @@ class ExperimentRunner:
         self.output_dim = experiments[0].getFlagValue('output_dim')
 
         self.batch_size = experiments[0].getFlagValue('b')
-        self.sesop_batch_size = experiments[0].getFlagValue('sesop_batch_size')
-        self.careless_batch_size = self.batch_size
 
         self.train_dataset_size, self.test_dataset_size = experiments[0].getDatasetSize()
 
@@ -71,7 +67,7 @@ class ExperimentRunner:
 
     #return a list of the models, losses, accuracies, after the done experiments were removed
     def remove_finished_experiments(self):
-        models, losses, accuracies, stages = [], [], [], []
+        models, losses, accuracies = [], [], []
         to_remove = []
         for e in self.experiments:
             if len(e.results[0].trainErrorPerItereation) >= e.getFlagValue('epochs')*(self.train_dataset_size/self.batch_size):
@@ -86,10 +82,9 @@ class ExperimentRunner:
 
         losses = [m.loss() for m in models]
         accuracies = [m.accuracy() for m in models]
-        stages = [m.stage for m in models]
-        #stages = []
 
-        return models, losses, accuracies, stages
+
+        return models, losses, accuracies
 
     def getSharedFlagValue(self, flagname):
         res = self.experiments[0].getFlagValue(flagname)
@@ -110,7 +105,7 @@ class ExperimentRunner:
                         self.batch_providers.append(
                             SimpleBatchProvider(input_dim=self.input_dim, output_dim=self.output_dim, \
                                                 dataset_size=self.train_dataset_size, \
-                                                batch_sizes=[self.batch_size]))
+                                                batch_size=self.batch_size))
 
                 elif model == 'mnist':
                     assert (False)
@@ -206,25 +201,18 @@ class ExperimentRunner:
             coord = tf.train.Coordinator()
             threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
-            print 'Pre-staging...'
-            for e in tqdm.tqdm(self.experiments):
-                for m in e.models:
-                    sess.run(m.stage)
+            for batch_provider in self.batch_providers:
+                batch_provider.custom_runner.start_threads(sess)
 
             print 'pulling initial weights from master'
-            for worker in e.models[1:]:
-                sess.run(worker.pull_from_master_op())
-
-            # print 'Write graph into tensorboard'
-            # writer = tf.summary.FileWriter('/tmp/generated_data/' + '1')
-            # writer.add_graph(sess.graph)
-            #self.epochs = 0
-            # Progress bar:
+            for e in self.experiments:
+                for worker in e.models[1:]:
+                    sess.run(worker.pull_from_master_op())
 
             for epoch in range(self.epochs):
 
                 print 'Setup losses'
-                models, _, accuracies, stages = self.remove_finished_experiments()
+                models, _, accuracies = self.remove_finished_experiments()
 
                 # run 20 steps (full batch optimization to start with)
 
@@ -236,31 +224,26 @@ class ExperimentRunner:
                 print 'Computing train and test Accuracy'
                 train_error, test_error = np.zeros(len(models)), np.zeros(len(models))
 
-
-                #assert (self.train_dataset_size % self.careless_batch_size == 0)
-                #assert (self.test_dataset_size % self.careless_batch_size == 0)
                 for m in models:
-                    m.batch_provider.set_source(sess, self.careless_batch_size, 1)
-                for i in tqdm.tqdm(range((self.train_dataset_size/1) / self.careless_batch_size)):
-                    train_error +=  np.array(sess.run(accuracies + stages)[:len(accuracies)])
-                train_error /= float((self.train_dataset_size/1) / self.careless_batch_size)
+                    m.batch_provider.set_data_source(sess, 'train')
+                for i in tqdm.tqdm(range((self.train_dataset_size/1) / self.batch_size)):
+                    train_error +=  np.array(sess.run(accuracies))
+                train_error /= float((self.train_dataset_size/1) / self.batch_size)
                 print 'Train Accuracy = ' + str(train_error)
 
                 for m in models:
-                    m.batch_provider.set_source(sess, self.careless_batch_size, 0)
-                for i in tqdm.tqdm(range(self.test_dataset_size / self.careless_batch_size)):
+                    m.batch_provider.set_data_source(sess, 'test')
+                for i in tqdm.tqdm(range(self.test_dataset_size / self.batch_size)):
 
                     #steps = {'accuracies' : accuracies, 'stages' : stages, 'merged' : merged}
-                    steps = {'accuracies': accuracies, 'stages': stages}
+                    steps = {'accuracies': accuracies}
                     steps = sess.run(steps)
 
                     # writer.add_summary(steps['merged'], epoch*(self.test_dataset_size / self.careless_batch_size) + i)
                     # writer.flush()
 
                     test_error += np.array(steps['accuracies'])
-
-                    #test_error += np.array(sess.run(accuracies + stages)[:len(accuracies)])
-                test_error /= float(self.test_dataset_size / self.careless_batch_size)
+                test_error /= float(self.test_dataset_size / self.batch_size)
                 print 'Test Accuracy = ' + str(test_error)
 
                 print 'Dumping results....'
@@ -268,7 +251,6 @@ class ExperimentRunner:
                 self.dump_results()
                 for m in tqdm.tqdm(models):
                     m.dump_checkpoint(sess)
-
 
                 print 'Start training Epoch #' + str([e.get_number_of_ran_epochs() for e in self.experiments])
                 print 'Training'
@@ -282,8 +264,8 @@ class ExperimentRunner:
                 #             e.add_iteration_train_error(model_idx, optimizer.losses[-1])
 
                 for m in models:
-                    m.batch_provider.set_source(sess, self.batch_size, 1)
-                optimizer.run_epoch(sess=sess, stages=stages)
+                    m.batch_provider.set_data_source(sess, 'train')
+                optimizer.run_epoch(sess=sess)
 
                 #dump eperiments before continue to next round!
 
@@ -429,7 +411,7 @@ def run_cifar_expr():
 
 def simple():
     experiments = {}
-    for lr in [0.001]:
+    for lr in [0.1]:
         experiments[len(experiments)] = experiment.Experiment(
         {
             'model': 'simple',
@@ -443,7 +425,7 @@ def simple():
             'dim': 10,
             'output_dim': 1,
             'dataset_size': 5000,
-            'hidden_layers_num': 1,
+            'hidden_layers_num': 3,
             'hidden_layers_size': 10,
 
 
@@ -457,7 +439,9 @@ def simple():
 
 def find_simple_baseline():
     experiments = {}
-    for lr in [1, 0.5, 0.1, 0.05, 0.01]:
+
+    #0.05 is the winner
+    for lr in [0.06, 0.05, 0.04, 0.03, 0.02]:
         experiments[len(experiments)] = experiment.Experiment(
         {
             'model': 'simple',

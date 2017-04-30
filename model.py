@@ -7,13 +7,17 @@ from experiments_manager import ExperimentsManager
 import utils
 from utils import check_create_dir
 from tensorflow.python.ops import data_flow_ops
+import numpy as np
 
 class FCLayer:
     def __init__(self, input, n_in, n_out, model, prefix, activation=True):
         with tf.variable_scope(prefix):
-            #print 'prefix = ' + str(prefix)
-            self.W = model.hvar_mgr.create_var(tf.Variable(tf.random_normal([n_in, n_out]), name='W'))
 
+            low = -np.sqrt(6.0 / (n_in + n_out))  # use 4 for sigmoid, 1 for tanh activation
+            high = np.sqrt(6.0 / (n_in + n_out))
+
+            #print 'prefix = ' + str(prefix)
+            self.W = model.hvar_mgr.create_var(tf.Variable(tf.random_uniform([n_in, n_out], minval=low, maxval=high, dtype=tf.float32), name='W'))
             self.b = model.hvar_mgr.create_var(tf.Variable(tf.zeros([n_out]), name='b'))
             a = tf.matmul(input, self.W.out()) + self.b.out()
             if activation == False:
@@ -26,7 +30,7 @@ class FCLayer:
         #print 'b = ' + str(sess.run(self.b.var))
         print 'W.out = ' + str(sess.run(self.W.out()))
 
-import numpy as np
+
 
 #This holds the model symbols
 class Model(object):
@@ -125,7 +129,7 @@ class Model(object):
 
 
     #self dontate a batch to be used by all.
-    def get_shared_feed(self, sess, batch_size, is_train, models):
+    def get_shared_feed(self, sess, models):
         x, y = sess.run(self.batch_provider.batch())
         res = {self.input: x, self.label: y}
         for m in models:
@@ -147,27 +151,13 @@ class Model(object):
         self.tensorboard_dir = ExperimentsManager().get_experiment_model_tensorboard_dir(self.experiment, self.node_id)
         self.summary_mgr = SummaryManager(self.tensorboard_dir)
 
-
         self.batch_provider = batch_provider
-
-
-
-        #self.loss_placeholder = tf.placeholder(dtype=tf.float32, shape=[], name='loss_placeholder')
-        #self.loss_b4_minus_after = tf.summary.scalar('loss_b4_minus_after', self.loss_placeholder)
 
         self.i = 0
         self.j = 0
 
-        #self.input = tf.placeholder(dtype=tf.float32, name='input_placeholder')
-        #self.label = tf.placeholder(dtype=tf.float32, name='output_placeholder')
-
         utils.printInfo(' self.batch_provider.batch() = ' + str( self.batch_provider.batch()))
 
-        #Use stageing area:
-        #stager = data_flow_ops.StagingArea([tf.float32, tf.float32])
-        #self.stage = stager.put(self.batch_provider.batch())
-        #self.input, self.label = stager.get() #self.batch_provider.batch()
-        self.stage = tf.no_op()
         self.input, self.label = self.batch_provider.batch()
 
 
@@ -177,20 +167,6 @@ class Model(object):
 
         utils.printInfo('Dumping into tensorboard ' + str(self.tensorboard_dir))
 
-    def log_loss_b4_minus_after(self, sess, loss_b4_minus_after):
-        s = sess.run(self.loss_b4_minus_after, {self.loss_placeholder: loss_b4_minus_after})
-        self.summary_mgr.writer.add_summary(s, self.j)
-        self.j += 1
-
-    # def dump_to_tensorboard(self, sess):
-    #     if (self.experiment.getFlagValue('hSize') == 0) or self.node_id != 0:
-    #         return
-    #     #print 'Dumping into tensorboard ' + str(self.tensorboard_dir)
-    #
-    #     s = sess.run(self.mergered_summeries)
-    #     self.summary_mgr.writer.add_summary(s, self.i)
-    #
-    #     self.i += 1
 
     def push_to_master_op(self):
         assert (self.node_id != 0)

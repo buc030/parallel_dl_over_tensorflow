@@ -65,22 +65,20 @@ class SeboostOptimizer:
         print 'self.train_steps = ' + str(self.train_steps)
         self.curr_iter = 1
 
-    def run_epoch(self, sess, stages):
+    def run_epoch(self, sess):
 
         for m in self.models:
-            m.batch_provider.set_source(sess, self.batch_size, 1)
-
+            m.batch_provider.set_data_source(sess, 'train')
 
         for i in tqdm.tqdm(range(self.train_dataset_size/self.batch_size)):
-            self.run_iter(sess, stages)
-
+            self.run_iter(sess)
 
         print 'Actual sesop freq is: ' + str(float(self.sesop_runs + 1) / (self.curr_iter + 1))
 
 
-    def run_simple_iter(self, sess, stages):
+    def run_simple_iter(self, sess):
         #print '################### RUNNING SIMPLE ITER ################'
-        _, losses, __ = sess.run([self.train_steps, self.losses, stages])
+        _, losses = sess.run([self.train_steps, self.losses])
 
         i = 0
         for e in self.experiments:
@@ -91,11 +89,9 @@ class SeboostOptimizer:
         self.curr_iter += 1
         return None  # TODO: need to return loss per experiment here
 
-
-
-    def run_iter(self, sess, stages):
+    def run_iter(self, sess):
         if self.curr_iter % self.params.values()[0].sgd_steps != 0:
-            return self.run_simple_iter(sess, stages)
+            return self.run_simple_iter(sess)
 
         return self.run_sesop(sess)
 
@@ -120,11 +116,9 @@ class SeboostOptimizer:
                 #f.write('debug_hvar.var = ' + str(sess.run(debug_hvar.var)))
                 f.write('---------------------')
 
-
     def run_sesop(self, sess):
-
         if self.experiments[0].getFlagValue('hSize') == 0 and self.experiments[0].getFlagValue('nodes') == 1:
-            self.run_simple_iter(sess, [])
+            self.run_simple_iter(sess)
             self.curr_iter += 1
             return None
 
@@ -149,28 +143,22 @@ class SeboostOptimizer:
             sess.run(b4_sesop)
 
             #Now optimize by alpha
-            master_model.batch_provider.set_source(sess, self.params[master_model].batch_size, 2)
+            master_model.batch_provider.set_data_source(sess, 'sesop')
 
             feed_dicts = []
             for i in range(master_model.experiment.sesop_batch_mult):
-                feed_dict = master_model.get_shared_feed(sess, self.batch_size, 2, worker_models)
+                feed_dict = master_model.get_shared_feed(sess, worker_models)
                 feed_dicts.append(feed_dict)
-
 
             losses[e] = sess.run([m.loss() for m in e.models], feed_dict=feed_dicts[0])
 
             loss_b4_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size, train_dataset_size=self.train_dataset_size)
 
-            print 'loss before sesop = ' + str(sess.run(master_model.loss(), feed_dict=feed_dicts[0]))
             self.dump_debug(sess, master_model, feed_dicts[0], 'loss_before_sesop')
-
-
 
             #loss_callback=debug_loss_callback
             def debug_loss_callback(loss, grad):
                 print 'loss = ' + str(loss)
-
-            sess.run(master_model.stage)
 
             print 'size of subspace = ' + str(len(self.params[master_model].cg_var_list))
             self.params[master_model].cg.minimize(sess, feed_dicts=feed_dicts)
@@ -184,7 +172,6 @@ class SeboostOptimizer:
 
             sess.run(zero_alpha)
 
-
             #Now send the results back to the workers
             for worker in worker_models:
                 #TODO: worker.assert_have_no_alpa_or_history_or_replicas()
@@ -193,7 +180,6 @@ class SeboostOptimizer:
             e.add_debug_sesop_on_sesop_batch(0, losses[e], sess.run(master_model.loss(), feed_dict=feed_dicts[0]))
 
             losses[e] = sess.run([m.loss() for m in e.models], feed_dict=feed_dicts[0])
-            print 'loss after sesop = ' + str(losses[e])
 
             self.dump_debug(sess, master_model, feed_dicts[0], 'master')
             if len(worker_models) > 0:
@@ -204,9 +190,7 @@ class SeboostOptimizer:
             # print 'master_weights = ' + str(sess.run(master_weights[0]))
             # print 'worker_weights = ' + str(sess.run(worker_weights[0]))
 
-
-            master_model.batch_provider.set_source(sess, self.batch_size, 1)
-            sess.run(master_model.stage)
+            master_model.batch_provider.set_data_source(sess, 'train')
 
         self.sesop_runs += 1
         self.curr_iter += 1
