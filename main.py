@@ -37,7 +37,7 @@ experiments = {}
 
 ############ MULTI NODE #################
 
-experiments = simple_multinode(n=2, h=4, sesop_batch_mult=5)
+experiments = simple_multinode(n=1, h=2, sesop_batch_mult=5)
 runner = ExperimentRunner(experiments, force_rerun=True)
 runner.run()
 

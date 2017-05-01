@@ -26,11 +26,12 @@ class SeboostOptimizerParams:
         self.cg_var_list = model.hvar_mgr.all_trainable_alphas()
         if len(self.cg_var_list) > 0:
             self.cg = tf.contrib.opt.ScipyOptimizerInterface(loss=model.loss(), var_list=self.cg_var_list, iteration_mult=self.sesop_batch_mult,\
-                                                             method='CG', options={'maxiter': 10})
+                                                             method='BFGS', options={'maxiter': 100, 'gtol' : 1e-5})
 
         # if len(self.cg_var_list) > 0:
         #     self.cg = NaturalGradientOptimizer(model.loss(), model.model.predictions, self.cg_var_list)
 
+#TODO: try big subspace with strong optimization
 
 #This runs the same optimization process for 'models' with corosponding metaparameters defined in 'experiments'
 #All the models see the exact same data!

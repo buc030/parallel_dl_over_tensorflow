@@ -53,21 +53,21 @@ experiments = {}
 # for h in [1, 2, 4, 8, 16]:
 #     experiments[len(experiments)] = simple_with_history_baseline(h=h, sesop_batch_mult=5)[0]
 
-########## 1 node ###########
-experiments[len(experiments)] = simple_multinode(n=1, h=0, sesop_batch_mult=5)[0]
-experiments[len(experiments)] = simple_multinode(n=1, h=1, sesop_batch_mult=5)[0]
-experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5)[0]
-experiments[len(experiments)] = simple_multinode(n=1, h=4, sesop_batch_mult=5)[0]
-
-########## 2 node ###########
-experiments[len(experiments)] = simple_multinode(n=2, h=0, sesop_batch_mult=5)[0]
-experiments[len(experiments)] = simple_multinode(n=2, h=1, sesop_batch_mult=5)[0]
-experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5)[0]
-experiments[len(experiments)] = simple_multinode(n=2, h=4, sesop_batch_mult=5)[0]
+# ########## 1 node ###########
+# experiments[len(experiments)] = simple_multinode(n=1, h=0, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=1, h=1, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=1, h=4, sesop_batch_mult=5)[0]
+#
+# ########## 2 node ###########
+# experiments[len(experiments)] = simple_multinode(n=2, h=0, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=2, h=1, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5)[0]
+# experiments[len(experiments)] = simple_multinode(n=2, h=4, sesop_batch_mult=5)[0]
 
 
 ########## 4 node ###########
-experiments[len(experiments)] = simple_multinode(n=4, h=4, sesop_batch_mult=5)[0]
+experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5)[0]
 
 
 # experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=5)[0]
