@@ -70,7 +70,7 @@ class ExperimentRunner:
         models, losses, accuracies = [], [], []
         to_remove = []
         for e in self.experiments:
-            if len(e.results[0].trainErrorPerItereation) >= e.getFlagValue('epochs')*(self.train_dataset_size/self.batch_size):
+            if len(e.results) > 0 and len(e.results[0].trainErrorPerItereation) >= e.getFlagValue('epochs')*(self.train_dataset_size/self.batch_size):
                 print 'Experiment ' + str(e) + ' is done! Removing it from run...'
                 to_remove.append(e)
 
@@ -445,8 +445,8 @@ def simple():
 def find_simple_baseline():
     experiments = {}
 
-    #0.08 is the winner
-    for lr in [0.1, 0.09, 0.08, 0.07, 0.06, 0.05]:
+    #0.06 is the winner
+    for lr in [0.09, 0.08, 0.07, 0.06, 0.05]:
         experiments[len(experiments)] = experiment.Experiment(
         {
             'model': 'simple',
@@ -459,7 +459,7 @@ def find_simple_baseline():
             'nodes': 1,
             'dim': 10,
             'output_dim': 1,
-            'dataset_size': 50000,
+            'dataset_size': 5000,
             'hidden_layers_num': 3,
             'hidden_layers_size': 100,
 
@@ -471,31 +471,6 @@ def find_simple_baseline():
         })
     return experiments
 
-def simple_with_history_baseline(h, sesop_batch_mult):
-    experiments = {}
-    experiments[len(experiments)] = experiment.Experiment(
-        {
-            'model': 'simple',
-            'b': 100,
-            'lr': 0.08,
-            'sesop_batch_size': 0,
-            'sesop_batch_mult': sesop_batch_mult,
-            'sesop_freq': 1.0 / 500.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
-            'hSize': h,
-            'nodes': 1,
-            'dim': 10,
-            'output_dim': 1,
-            'dataset_size': 50000,
-            'hidden_layers_num': 3,
-            'hidden_layers_size': 100,
-
-
-            'epochs': 30,
-            'num_residual_units': None
-
-
-    })
-    return experiments
 
 
 def simple_multinode(n, h, sesop_batch_mult):
@@ -504,7 +479,7 @@ def simple_multinode(n, h, sesop_batch_mult):
         {
             'model': 'simple',
             'b': 100,
-            'lr': 0.08,
+            'lr': 0.06,
             'sesop_batch_size': 0,
             'sesop_batch_mult': sesop_batch_mult,
             'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)

@@ -44,7 +44,6 @@ class HVar:
         self.history_aplha = []
 
         self.replicas = []
-        self.replicas_aplha = []
 
         self.next_idx = 0
         self.op_cache = {}
@@ -71,11 +70,6 @@ class HVar:
                         #SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_h', self.history_aplha[-1]))
                     tf.summary.histogram('alphas_h', self.history_aplha[-1])
 
-            with tf.name_scope('replicas_aplha'):
-                for i in range(self.nodes - 1):
-                    self.replicas_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_n_' + str(i)))
-                        #SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_n', self.replicas_aplha[-1]))
-                    tf.summary.histogram('alpha_n_', self.replicas_aplha[-1])
 
         self.zero_alpha = None
         if self.node_id == 0:
@@ -90,47 +84,58 @@ class HVar:
             with tf.name_scope('push_to_master'):
                 self.push_to_master = tf.assign(self.replicas[self.node_id - 1], self.out())
 
-
     def out(self):
         if self.o is not None:
             return self.o
 
         with tf.name_scope(self.name + '_out'):
             #return an affine combination of the history vectors
-            #and a dictonary to add to feed_dict.
-
+            if self.hSize == 0:
+                self.o = self.var
+                return self.o
 
             if self.node_id == 0:
-                terms = []
+                terms = [self.var]
                 for r, a in zip(self.history, self.history_aplha):
                     terms.append(r * a)
 
-                for r, a in zip(self.replicas, self.replicas_aplha):
-                    terms.append(r * a)
-
-                self.o = tf.add_n([self.var] + terms)
+                self.o = tf.add_n(terms)
                 return self.o
 
             self.o = self.var
-            return self.var
-
-    # create an op that puts var of this node into its replica
-    #Called before sesop!
-    def push_to_master_op(self):
-        assert (self.node_id != 0)
-        return self.push_to_master
-
-    # this must be called after sesop was executed!
-    #Called after sesop!
-    def pull_from_master_op(self):
-        assert (self.node_id != 0)
-        return self.pull_from_master
+            return self.o
 
     #return an op that pushes the current progress into history, we need to do this before we optimize by alpha
     #To approximly maintain the expanding mandifold property.
     # This must be called when alpahs are zeros!!!
     def update_history_before_sesop_op(self):
-        return tf.assign(self.history[self.next_idx], self.out() - self.last_snapshot)
+        assert (self.node_id == 0)
+        terms = [(self.out() - self.last_snapshot)/(len(self.replicas) + 1)]
+        for r in self.replicas:
+            terms.append(r - self.last_snapshot)
+            terms[-1] = terms[-1]/(len(self.replicas) + 1)
+
+        avrage_progress = tf.add_n(terms)
+
+        #SV DEBUG REMOVE this assert!
+        assert_op = tf.Assert(tf.equal(self.history_aplha[0], np.zeros(1))[0], [7])
+        assign_op = tf.assign(self.history[self.next_idx], avrage_progress)
+
+        assign_op = with_dependencies([assert_op], assign_op)
+        return assign_op
+
+
+    # create an op that puts var of this node into its replica
+    # Called before sesop!
+    def push_to_master_op(self):
+        assert (self.node_id != 0)
+        return self.push_to_master
+
+    # this must be called after sesop was executed!
+    # Called after sesop!
+    def pull_from_master_op(self):
+        assert (self.node_id != 0)
+        return self.pull_from_master
 
     #return 2 ops:
     # 1. an op that pushes the current progress into history, we need to do this before we optimize by alpha
@@ -142,10 +147,12 @@ class HVar:
             if 0 not in self.op_cache:
                 if self.nodes > 1:
                     update_var_op = tf.assign(self.var, self.out())
-                    update_snapshot_op = tf.assign(self.last_snapshot, self.out())
+                    update_snapshot_op = tf.assign(self.last_snapshot, update_var_op)
                     self.op_cache[0] = [tf.no_op(), [update_var_op, update_snapshot_op]]
                 else:
                     self.op_cache[0] = [tf.no_op(), tf.no_op()]
+
+            #self.next_idx = (self.next_idx + 1) % self.hSize
             return self.op_cache[0]
 
         if self.next_idx not in self.op_cache:
@@ -180,7 +187,7 @@ class HVar:
     def zero_alpha_op(self):
         if self.zero_alpha is None:
             group_op = tf.no_op()
-            for a in self.replicas_aplha + self.history_aplha:
+            for a in self.history_aplha:
                 group_op = tf.group(group_op, tf.assign(a, np.zeros(1)))
             self.zero_alpha = group_op
 

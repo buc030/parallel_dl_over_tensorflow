@@ -117,7 +117,7 @@ class SeboostOptimizer:
                 f.write('---------------------')
 
     def run_sesop(self, sess):
-        if self.experiments[0].getFlagValue('hSize') == 0 and self.experiments[0].getFlagValue('nodes') == 1:
+        if self.experiments[0].getFlagValue('hSize') == 0:
             self.run_simple_iter(sess)
             self.curr_iter += 1
             return None

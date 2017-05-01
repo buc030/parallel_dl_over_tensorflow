@@ -78,9 +78,6 @@ class Model(object):
                     #print 'alpha name = ' + str(tmp.name)
                     self.model.summary_mgr.add_iter_summary(tmp)
 
-                for alpha in res.replicas_aplha:
-                    self.model.summary_mgr.add_iter_summary(tf.summary.histogram('replicas_aplha', alpha))
-
             return res
 
         def reset(self):
@@ -90,7 +87,7 @@ class Model(object):
         def all_trainable_alphas(self):
             alphas = []
             for hvar in self.all_hvars:
-                alphas.extend(hvar.replicas_aplha + hvar.history_aplha)
+                alphas.extend(hvar.history_aplha)
             return alphas
 
         # all the regular weights to be trained
