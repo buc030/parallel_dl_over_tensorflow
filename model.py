@@ -48,7 +48,13 @@ class Model(object):
         train_error /= float((train_dataset_size / 1) / batch_size)
         return train_error
 
+    def dump_debug(self, sess, suffix):
+        with open('debug_' + suffix, 'w') as f:
 
+            for debug_hvar in self.hvar_mgr.all_hvars:
+                f.write('debug_hvar.out() = ' + str(sess.run(debug_hvar.out())) + '\n')
+                f.write('---------------------')
+            f.flush()
 
     def print_layer_params(self, sess, i):
          self.layers[i].print_params(sess)
@@ -57,6 +63,7 @@ class Model(object):
         def __init__(self, model):
             self.all_hvars = []
             self.model = model
+            tf.set_random_seed(895623)
 
         def create_var(self, var):
             res = HVar(var, self.model)

@@ -156,12 +156,14 @@ class SeboostOptimizer:
 
             self.dump_debug(sess, master_model, feed_dicts[0], 'loss_before_sesop')
 
+            e.start_new_subspace_optimization()
             #loss_callback=debug_loss_callback
             def debug_loss_callback(loss, grad):
-                print 'loss = ' + str(loss)
+                e.add_loss_during_supspace_optimization(loss)
+                e.add_grad_norm_during_supspace_optimization(np.linalg.norm(grad, 2))
 
             print 'size of subspace = ' + str(len(self.params[master_model].cg_var_list))
-            self.params[master_model].cg.minimize(sess, feed_dicts=feed_dicts)
+            self.params[master_model].cg.minimize(sess, feed_dicts=feed_dicts, loss_callback=debug_loss_callback)
 
             loss_after_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size,
                                                              train_dataset_size=self.train_dataset_size)

@@ -134,6 +134,9 @@ class ExperimentRunner:
 
         tf.reset_default_graph()
 
+        #set numpy seed:
+        np.random.seed(6352)
+
 
         config = tf.ConfigProto()
         # config.gpu_options.allow_growth = True
@@ -202,12 +205,14 @@ class ExperimentRunner:
             threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
             for batch_provider in self.batch_providers:
-                batch_provider.custom_runner.start_threads(sess, n_train_threads=8, n_test_threads=1)
+                batch_provider.custom_runner.start_threads(sess, n_train_threads=1, n_test_threads=1)
 
             print 'pulling initial weights from master'
             for e in self.experiments:
                 for worker in e.models[1:]:
                     sess.run(worker.pull_from_master_op())
+
+            models, _, accuracies = self.remove_finished_experiments()
 
             for epoch in range(self.epochs):
 
@@ -502,12 +507,12 @@ def simple_multinode(n, h, sesop_batch_mult):
             'lr': 0.08,
             'sesop_batch_size': 0,
             'sesop_batch_mult': sesop_batch_mult,
-            'sesop_freq': 1.0 / 500.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
             'hSize': h,
             'nodes': n,
             'dim': 10,
             'output_dim': 1,
-            'dataset_size': 50000,
+            'dataset_size': 5000,
             'hidden_layers_num': 3,
             'hidden_layers_size': 100,
 

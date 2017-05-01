@@ -165,6 +165,17 @@ class Experiment:
 
         return len(self.results[0].trainError) - 1
 
+    def start_new_subspace_optimization(self):
+        self.results[0].loss_during_supspace_optimization.append([])
+        self.results[0].grad_norm_during_supspace_optimization.append([])
+
+    def add_loss_during_supspace_optimization(self, loss):
+        self.results[0].loss_during_supspace_optimization[-1].append(loss)
+
+    def add_grad_norm_during_supspace_optimization(self, loss):
+        self.results[0].grad_norm_during_supspace_optimization[-1].append(loss)
+
+
     def add_iteration_train_error(self, model_idx, err):
         self.results[model_idx].trainErrorPerItereation.append(err)
 

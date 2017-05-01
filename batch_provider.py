@@ -46,10 +46,15 @@ class CustomRunner(object):
 
         # The actual queue of data. The queue contains a vector for
         # the mnist features, and a scalar label.
-        self.train_queue = tf.RandomShuffleQueue(shapes=[[self.dim], [self.label_dim]],
-                                                 dtypes=[tf.float32, tf.float32],
-                                                 capacity=6000,
-                                                 min_after_dequeue=1000)
+        # self.train_queue = tf.RandomShuffleQueue(shapes=[[self.dim], [self.label_dim]],
+        #                                          dtypes=[tf.float32, tf.float32],
+        #                                          capacity=6000,
+        #                                          min_after_dequeue=1000,
+        #                                          seed=1257812)
+
+        self.train_queue = tf.FIFOQueue(shapes=[[self.dim], [self.label_dim]],
+                                       dtypes=[tf.float32, tf.float32],
+                                       capacity=6000)
 
         self.test_queue = tf.FIFOQueue(shapes=[[self.dim], [self.label_dim]],
                                        dtypes=[tf.float32, tf.float32],
@@ -100,7 +105,7 @@ class CustomRunner(object):
         Function run on alternate thread. Basically, keep adding data to the queue.
         """
         for dataX, dataY in self.train_data_iterator():
-            sess.run(self.train_enqueue_op, feed_dict={self.train_dataX:dataX, self.train_dataY:dataY})
+            sess.run(self.train_enqueue_op, feed_dict={self.train_dataX : dataX, self.train_dataY : dataY})
 
     def test_thread_main(self, sess):
         """

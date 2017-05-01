@@ -26,7 +26,8 @@ class ExperimentResults:
         self.debug_sesop_after = []
         self.debug_sesop_on_sesop_batch_before = []
         self.debug_sesop_on_sesop_batch_after = []
-
+        self.loss_during_supspace_optimization = []
+        self.grad_norm_during_supspace_optimization = []
 
         self.epochTimes = []
         self.epochsDone = 0
@@ -88,6 +89,50 @@ class ExperimentResults:
         plt.plot(range(len(self.testError[l[0]:l[1]])), self.testError[l[0]:l[1]], '-', label=full_label)
         # plt.plot(range(self.testError[:l].size), self.testError[:l], 'o')
         plt.legend()
+
+    def plot_loss_during_sesop(self):
+        plt.title('loss during sesop')
+        xs = []
+        for x1 in self.loss_during_supspace_optimization:
+            plt.axvline(x=len(xs), ls='-', color='g')
+            for x in x1:
+                xs.append(x)
+            plt.axvline(x=len(xs) - 1, ls='-', color='r')
+
+    def plot_loss_during_supspace_optimization(self):
+
+        plt.title('loss before and after sesop. Green: before, Red: after')
+        xs = []
+        for x1, x2 in zip(self.debug_sesop_on_sesop_batch_after, self.debug_sesop_on_sesop_batch_before):
+            xs.append(x2[0])
+            plt.axvline(x=len(xs) - 1, ls='-', color='g')
+            xs.append(x1)
+            plt.axvline(x=len(xs) - 1, ls='-', color='r')
+
+        plt.plot(xs, label='batch')
+
+        xs = []
+        for x1, x2 in zip(self.debug_sesop_after, self.debug_sesop_before):
+            xs.append(x2[0])
+            plt.axvline(x=len(xs) - 1, ls='-', color='g')
+            xs.append(x1)
+            plt.axvline(x=len(xs) - 1, ls='-', color='r')
+
+        plt.plot(xs, label='full_data')
+        plt.grid(True)
+
+    def plot_grad_norm_during_supspace_optimization(self):
+        plt.title('grad norm during sesop')
+        xs = []
+        for x1 in self.grad_norm_during_supspace_optimization:
+            plt.axvline(x=len(xs), ls='-', color='g')
+            for x in x1:
+                xs.append(x)
+            plt.axvline(x=len(xs) - 1, ls='-', color='r')
+
+        plt.plot(xs)
+        plt.yscale('log')
+
 
     def plotTrainErrorAroundMerge(self, l=(0, 100)):
 

@@ -29,10 +29,10 @@ def display_results(experiments):
     # comperator.compare(group_by='dataset_size', error_type='trainPerIteration')
     # plt.show()
 
+    # comperator.compare(group_by='nodes', error_type='train')
+    # plt.show()
     comperator.compare(group_by='dataset_size', error_type='train')
     plt.show()
-    # comperator.compare(group_by='dataset_size', error_type='test')
-    # plt.show()
 
 
     bests = {}
@@ -49,8 +49,27 @@ def display_results(experiments):
 
 experiments = {}
 
-experiments = find_simple_baseline()
+#experiments = find_simple_baseline()
+# for h in [1, 2, 4, 8, 16]:
+#     experiments[len(experiments)] = simple_with_history_baseline(h=h, sesop_batch_mult=5)[0]
+experiments[len(experiments)] = simple_multinode(n=1, h=0, sesop_batch_mult=5)[0]
+experiments[len(experiments)] = simple_multinode(n=1, h=1, sesop_batch_mult=5)[0]
+experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5)[0]
 
+
+experiments[len(experiments)] = simple_multinode(n=2, h=0, sesop_batch_mult=5)[0]
+experiments[len(experiments)] = simple_multinode(n=2, h=1, sesop_batch_mult=5)[0]
+experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5)[0]
+experiments[len(experiments)] = simple_multinode(n=2, h=4, sesop_batch_mult=5)[0]
+
+
+# for h in [1, 2, 4, 8, 16]:
+#     experiments[len(experiments)] = simple_multinode(n=2, h=h, sesop_batch_mult=5)[0]
+#
+# for h in [1, 2, 4, 8, 16]:
+#     experiments[len(experiments)] = simple_multinode(n=4, h=h, sesop_batch_mult=5)[0]
+#
+# experiments[len(experiments)] = simple_multinode(n=2, h=4, sesop_batch_mult=1)[0]
 #
 # experiments[len(experiments)] = simple_with_history_bi_batch_size_baseline(1)[0]
 # experiments[len(experiments)] = simple_with_history_baseline(1)[0]
