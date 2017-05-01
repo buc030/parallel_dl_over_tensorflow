@@ -87,7 +87,7 @@ class Model(object):
         def all_trainable_alphas(self):
             alphas = []
             for hvar in self.all_hvars:
-                alphas.extend(hvar.history_aplha)
+                alphas.extend(hvar.replicas_aplha + hvar.history_aplha)
             return alphas
 
         # all the regular weights to be trained

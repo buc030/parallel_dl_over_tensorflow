@@ -44,6 +44,7 @@ class HVar:
         self.history_aplha = []
 
         self.replicas = []
+        self.replicas_aplha = []
 
         self.next_idx = 0
         self.op_cache = {}
@@ -70,6 +71,12 @@ class HVar:
                         #SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_h', self.history_aplha[-1]))
                     tf.summary.histogram('alphas_h', self.history_aplha[-1])
 
+            with tf.name_scope('replicas_aplha'):
+                for i in range(self.nodes - 1):
+                    self.replicas_aplha.append(
+                        tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_n_' + str(i)))
+                    # SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_n', self.replicas_aplha[-1]))
+                    tf.summary.histogram('alpha_n_', self.replicas_aplha[-1])
 
         self.zero_alpha = None
         if self.node_id == 0:
@@ -90,13 +97,16 @@ class HVar:
 
         with tf.name_scope(self.name + '_out'):
             #return an affine combination of the history vectors
-            if self.hSize == 0:
+            if self.hSize == 0 and self.nodes == 1:
                 self.o = self.var
                 return self.o
 
             if self.node_id == 0:
                 terms = [self.var]
                 for r, a in zip(self.history, self.history_aplha):
+                    terms.append(r * a)
+
+                for r, a in zip(self.replicas, self.replicas_aplha):
                     terms.append(r * a)
 
                 self.o = tf.add_n(terms)
@@ -110,19 +120,7 @@ class HVar:
     # This must be called when alpahs are zeros!!!
     def update_history_before_sesop_op(self):
         assert (self.node_id == 0)
-        terms = [(self.out() - self.last_snapshot)/(len(self.replicas) + 1)]
-        for r in self.replicas:
-            terms.append(r - self.last_snapshot)
-            terms[-1] = terms[-1]/(len(self.replicas) + 1)
-
-        avrage_progress = tf.add_n(terms)
-
-        #SV DEBUG REMOVE this assert!
-        assert_op = tf.Assert(tf.equal(self.history_aplha[0], np.zeros(1))[0], [7])
-        assign_op = tf.assign(self.history[self.next_idx], avrage_progress)
-
-        assign_op = with_dependencies([assert_op], assign_op)
-        return assign_op
+        return tf.assign(self.history[self.next_idx], self.out() - self.last_snapshot)
 
 
     # create an op that puts var of this node into its replica
@@ -187,7 +185,7 @@ class HVar:
     def zero_alpha_op(self):
         if self.zero_alpha is None:
             group_op = tf.no_op()
-            for a in self.history_aplha:
+            for a in self.replicas_aplha + self.history_aplha:
                 group_op = tf.group(group_op, tf.assign(a, np.zeros(1)))
             self.zero_alpha = group_op
 
