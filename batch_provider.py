@@ -141,6 +141,7 @@ class SimpleBatchProvider:
         self.custom_runner = CustomRunner(self.training_data, self.training_labels,
                                           self.testing_data, self.testing_labels, batch_size)
 
+        self._batch = self.custom_runner.get_inputs()
     def set_data_source(self, sess, data_name='train'):
         if data_name == 'test':
             self.custom_runner.set_data_source(sess, 0)
@@ -149,7 +150,7 @@ class SimpleBatchProvider:
             self.custom_runner.set_data_source(sess, 1)
 
     def batch(self):
-        return self.custom_runner.get_inputs()
+        return self._batch
 
 
 class CifarBatchProvider:

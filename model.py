@@ -83,11 +83,20 @@ class Model(object):
         def reset(self):
             self.all_hvars = []
 
+        def assert_alphas_are_zero(self):
+            res = []
+            for hvar in self.all_hvars:
+                res.append(hvar.assert_alphas_are_zero())
+            return res
+
+
         # the alphas from sesop (the coefitients that choose the history vector)
         def all_trainable_alphas(self):
             alphas = []
             for hvar in self.all_hvars:
+                #SV TODO: #SV DEBUG : add optimization on hvar.replicas_aplha
                 alphas.extend(hvar.replicas_aplha + hvar.history_aplha)
+                #alphas.extend(hvar.history_aplha)
             return alphas
 
         # all the regular weights to be trained
@@ -218,6 +227,7 @@ class SimpleModel(Model):
 
             self.model_out = self.layers[-1].out
 
+
         # when log is true we build a model for training!
 
         loss_per_sample = tf.squared_difference(self.model_out, self.label, name='loss_per_sample')
@@ -229,13 +239,17 @@ class SimpleModel(Model):
     def get_extra_train_ops(self):
         return []
 
+    def div_learning_rate(self, sess, factor):
+        sess.run(self.div_learning_rate_op, feed_dict={self.lrn_rate_divide_factor: factor})
 
     def build_train_op(self):
         lrn_rate = tf.Variable(initial_value=self.experiment.getFlagValue('lr'), trainable=False, dtype=tf.float32,
                                name='model_start_learning_rate')  # tf.constant(self.hps.lrn_rate, tf.float32)
 
-
         self.lrn_rate = lrn_rate
+        self.lrn_rate_divide_factor = tf.placeholder(dtype=tf.float32)
+        self.div_learning_rate_op = tf.assign(self.lrn_rate, self.lrn_rate/self.lrn_rate_divide_factor)
+
         trainable_variables = self.hvar_mgr.all_trainable_weights()
         grads = tf.gradients(self._loss, trainable_variables)
         optimizer = tf.train.GradientDescentOptimizer(self.lrn_rate)

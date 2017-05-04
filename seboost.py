@@ -26,10 +26,10 @@ class SeboostOptimizerParams:
         self.cg_var_list = model.hvar_mgr.all_trainable_alphas()
         if len(self.cg_var_list) > 0:
             self.cg = tf.contrib.opt.ScipyOptimizerInterface(loss=model.loss(), var_list=self.cg_var_list, iteration_mult=self.sesop_batch_mult,\
-                                                             method='BFGS', options={'maxiter': 100, 'gtol' : 1e-5})
+                                                             method='BFGS', options={'maxiter': 200*len(self.cg_var_list), 'gtol' : 1e-6})
 
         # if len(self.cg_var_list) > 0:
-        #     self.cg = NaturalGradientOptimizer(model.loss(), model.model.predictions, self.cg_var_list)
+        #     self.cg = NaturalGradientOptimizer(model.loss(), model.predictions, self.cg_var_list)
 
 #TODO: try big subspace with strong optimization
 
@@ -66,6 +66,8 @@ class SeboostOptimizer:
         print 'self.train_steps = ' + str(self.train_steps)
         self.curr_iter = 1
 
+        self.loss_on_prev_sesop = None
+
     def run_epoch(self, sess):
 
         for m in self.models:
@@ -76,9 +78,8 @@ class SeboostOptimizer:
 
         print 'Actual sesop freq is: ' + str(float(self.sesop_runs + 1) / (self.curr_iter + 1))
 
-
     def run_simple_iter(self, sess):
-        #print '################### RUNNING SIMPLE ITER ################'
+        #print '############### RUNNING SIMPLE ITER ################'
         _, losses = sess.run([self.train_steps, self.losses])
 
         i = 0
@@ -94,7 +95,21 @@ class SeboostOptimizer:
         if self.curr_iter % self.params.values()[0].sgd_steps != 0:
             return self.run_simple_iter(sess)
 
-        return self.run_sesop(sess)
+
+        # loss_before_sesop = self.models[0].calc_train_accuracy(sess, batch_size=self.batch_size,
+        #                                           train_dataset_size=self.train_dataset_size)
+        #
+        # if self.loss_on_prev_sesop is not None and loss_before_sesop > self.loss_on_prev_sesop:
+        #     print '#### DIVIDING LEARNING RATE #####'
+        #     for m in self.models:
+        #         m.div_learning_rate(sess, 10)
+
+        res = self.run_sesop(sess)
+
+        # self.loss_on_prev_sesop = self.models[0].calc_train_accuracy(sess, batch_size=self.batch_size,
+        #                                       train_dataset_size=self.train_dataset_size)
+
+        return res
 
     def dump_debug(self, sess, master_model, feed_dict, suffix):
         return
@@ -124,9 +139,6 @@ class SeboostOptimizer:
             return None
 
 
-        #loss per experiment
-        losses = {}
-
         for e in self.experiments:
 
             master_model = e.models[0]
@@ -134,14 +146,15 @@ class SeboostOptimizer:
 
             assert (master_model.node_id == 0)
 
-            for worker in worker_models:
-                sess.run(worker.push_to_master_op())
+            sess.run([worker.push_to_master_op() for worker in worker_models])
 
             b4_sesop, after_sesop = master_model.hvar_mgr.all_history_update_ops()
             zero_alpha = master_model.hvar_mgr.all_zero_alpha_ops()
 
-            #Push the new direction into P:
+            sess.run(master_model.hvar_mgr.assert_alphas_are_zero())
+            #Push the new direction into P, and set initial alpha values for replicas
             sess.run(b4_sesop)
+
 
             #Now optimize by alpha
             master_model.batch_provider.set_data_source(sess, 'train')
@@ -151,11 +164,9 @@ class SeboostOptimizer:
                 feed_dict = master_model.get_shared_feed(sess, worker_models)
                 feed_dicts.append(feed_dict)
 
-            losses[e] = sess.run([m.loss() for m in e.models], feed_dict=feed_dicts[0])
+            loss_b4_sesop_on_batch = sess.run(master_model.loss(), feed_dict=feed_dicts[0])
 
             loss_b4_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size, train_dataset_size=self.train_dataset_size)
-
-            self.dump_debug(sess, master_model, feed_dicts[0], 'loss_before_sesop')
 
             e.start_new_subspace_optimization()
             #loss_callback=debug_loss_callback
@@ -166,10 +177,10 @@ class SeboostOptimizer:
             print 'size of subspace = ' + str(len(self.params[master_model].cg_var_list))
             self.params[master_model].cg.minimize(sess, feed_dicts=feed_dicts, loss_callback=debug_loss_callback)
 
-            loss_after_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size,
-                                                             train_dataset_size=self.train_dataset_size)
+            loss_after_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size, train_dataset_size=self.train_dataset_size)
 
             e.add_debug_sesop(0, loss_b4_sesop, loss_after_sesop)
+            e.add_debug_sesop_on_sesop_batch(0, loss_b4_sesop_on_batch, sess.run(master_model.loss(), feed_dict=feed_dicts[0]))
 
             sess.run(after_sesop) #after this 'snapshot' is updated with the result of the sesop
 
@@ -177,12 +188,9 @@ class SeboostOptimizer:
 
             #Now send the results back to the workers
             for worker in worker_models:
-                #TODO: worker.assert_have_no_alpa_or_history_or_replicas()
                 sess.run(worker.pull_from_master_op()) #assign(var, snapshot)
 
-            e.add_debug_sesop_on_sesop_batch(0, losses[e], sess.run(master_model.loss(), feed_dict=feed_dicts[0]))
 
-            losses[e] = sess.run([m.loss() for m in e.models], feed_dict=feed_dicts[0])
 
             self.dump_debug(sess, master_model, feed_dicts[0], 'master')
             if len(worker_models) > 0:
@@ -194,6 +202,8 @@ class SeboostOptimizer:
             # print 'worker_weights = ' + str(sess.run(worker_weights[0]))
 
             master_model.batch_provider.set_data_source(sess, 'train')
+
+            sess.run(master_model.hvar_mgr.assert_alphas_are_zero())
 
         self.sesop_runs += 1
         self.curr_iter += 1

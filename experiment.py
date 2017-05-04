@@ -76,7 +76,7 @@ class Experiment:
         self.bs, self.sesop_batch_size = flags['b'], flags['sesop_batch_size']
         self.sesop_batch_mult = self.getFlagValue('sesop_batch_mult')
 
-        self.models = []
+
         self.results = []
 
         if self.getFlagValue('model') == 'simple':
@@ -109,6 +109,7 @@ class Experiment:
 
     def init_models(self, gpu, batch_providers):
         assert(len(batch_providers) >= self.getFlagValue('nodes'))
+        self.models = []
         #build the models and connect it to batch_providers
         with tf.variable_scope("experiment_models") as scope:
             for i in range(self.getFlagValue('nodes')):

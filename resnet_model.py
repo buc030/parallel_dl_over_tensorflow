@@ -162,6 +162,7 @@ class ResNet(object):
       optimizer = tf.train.GradientDescentOptimizer(self.lrn_rate)
     elif self.hps.optimizer == 'mom':
       optimizer = tf.train.MomentumOptimizer(self.lrn_rate, 0.9)
+      # accum = accum1 * (momentum/2) + accum2 * (momentum/2) + grad1
     else:
       assert (False)
 

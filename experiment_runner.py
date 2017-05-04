@@ -473,13 +473,14 @@ def find_simple_baseline():
 
 
 
-def simple_multinode(n, h, sesop_batch_mult):
+def simple_multinode(n, h, sesop_batch_mult, lr):
     experiments = {}
     experiments[len(experiments)] = experiment.Experiment(
         {
             'model': 'simple',
             'b': 100,
-            'lr': 0.06,
+            #'lr': 0.06,
+            'lr': lr,
             'sesop_batch_size': 0,
             'sesop_batch_mult': sesop_batch_mult,
             'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)

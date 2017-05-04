@@ -74,6 +74,8 @@ class ExperimentResults:
             full_label = 'train(' + self.buildLabel(flag_names_to_use_in_label) + ')'
         plt.plot(range(len(self.trainError[l[0]:l[1]])), self.trainError[l[0]:l[1]], '-', label=full_label)
         plt.legend()
+        plt.grid(True)
+        plt.yscale('log')
 
     def plotTestError(self, l=(0, 100), flag_names_to_use_in_label=None):
         plt.title('Test Error')
@@ -90,6 +92,9 @@ class ExperimentResults:
         # plt.plot(range(self.testError[:l].size), self.testError[:l], 'o')
         plt.legend()
 
+    """
+    The loss inside the subspace optimization
+    """
     def plot_loss_during_sesop(self):
         plt.title('loss during sesop')
         xs = []
@@ -99,28 +104,13 @@ class ExperimentResults:
                 xs.append(x)
             plt.axvline(x=len(xs) - 1, ls='-', color='r')
 
-    def plot_loss_during_supspace_optimization(self):
-
-        plt.title('loss before and after sesop. Green: before, Red: after')
-        xs = []
-        for x1, x2 in zip(self.debug_sesop_on_sesop_batch_after, self.debug_sesop_on_sesop_batch_before):
-            xs.append(x2[0])
-            plt.axvline(x=len(xs) - 1, ls='-', color='g')
-            xs.append(x1)
-            plt.axvline(x=len(xs) - 1, ls='-', color='r')
-
-        plt.plot(xs, label='batch')
-
-        xs = []
-        for x1, x2 in zip(self.debug_sesop_after, self.debug_sesop_before):
-            xs.append(x2[0])
-            plt.axvline(x=len(xs) - 1, ls='-', color='g')
-            xs.append(x1)
-            plt.axvline(x=len(xs) - 1, ls='-', color='r')
-
-        plt.plot(xs, label='full_data')
+        plt.plot(xs)
         plt.grid(True)
+        plt.yscale('log')
 
+    """
+    The gradient norm inside the subspace optimization
+    """
     def plot_grad_norm_during_supspace_optimization(self):
         plt.title('grad norm during sesop')
         xs = []
@@ -131,7 +121,38 @@ class ExperimentResults:
             plt.axvline(x=len(xs) - 1, ls='-', color='r')
 
         plt.plot(xs)
+        plt.grid(True)
         plt.yscale('log')
+
+
+
+    """
+    The loss before and after subspace optimization
+    """
+    def plot_loss_before_and_after_supspace_optimization(self):
+
+        plt.title('loss before and after sesop. Green: before, Red: after')
+        xs = []
+        for x1, x2 in zip(self.debug_sesop_on_sesop_batch_after, self.debug_sesop_on_sesop_batch_before):
+            xs.append(x2)
+            plt.axvline(x=len(xs) - 1, ls='-', color='g')
+            xs.append(x1)
+            plt.axvline(x=len(xs) - 1, ls='-', color='r')
+
+        plt.plot(xs, label='batch')
+
+        xs = []
+        for x1, x2 in zip(self.debug_sesop_after, self.debug_sesop_before):
+            xs.append(x2)
+            plt.axvline(x=len(xs) - 1, ls='-', color='g')
+            xs.append(x1)
+            plt.axvline(x=len(xs) - 1, ls='-', color='r')
+
+        plt.plot(xs, label='full_data')
+        plt.grid(True)
+        plt.yscale('log')
+
+
 
 
     def plotTrainErrorAroundMerge(self, l=(0, 100)):
@@ -360,7 +381,7 @@ class ExperimentComperator:
         #Plot train error for each group:
         for val in sorted(apeared_values.keys()):
             expreiments = apeared_values[val]
-            plt.figure(group_by + str(expreiments[0].getFlagValue(group_by)), figsize=(10,8))
+            fig = plt.figure(group_by + str(expreiments[0].getFlagValue(group_by)), figsize=(10,8))
             self.apply_figure_attributes()
 
             print 'val = ' + str(val) + ', expreiments = ' + str(expreiments)
@@ -377,6 +398,24 @@ class ExperimentComperator:
                     expr.results[idx].plotTrainError((0, 100), [group_by])
                 elif error_type == 'trainPerIteration':
                     expr.results[idx].plotTrainErrorPerIteration(diff + [group_by])
+                elif error_type == 'debug':
+                    #temp = ExperimentResults()
+                    fig = plt.figure(group_by + str(expreiments[0].getFlagValue(group_by)), figsize=(10, 8))
+                    expr.results[idx].plotTrainError((0, 100), diff + [group_by])
+
+                    fig = plt.figure(figsize=(10, 8))
+                    temp = expr.results[idx]
+                    fig.add_subplot(221)
+                    temp.plot_grad_norm_during_supspace_optimization()
+
+                    fig.add_subplot(222)
+                    temp.plot_loss_during_sesop()
+
+                    fig.add_subplot(223)
+                    temp.plot_loss_before_and_after_supspace_optimization()
+
+                    fig.add_subplot(224)
+                    expr.results[idx].plotTrainError((0, 100), diff + [group_by])
                 else:
                     expr.results[idx].plotTrainError((0,100), diff + [group_by])
             #plt.legend(loc='center left', bbox_to_anchor=(0.4, 1))

@@ -31,7 +31,8 @@ def display_results(experiments):
 
     # comperator.compare(group_by='nodes', error_type='train')
     # plt.show()
-    comperator.compare(group_by='hSize', error_type='test')
+    comperator.compare(group_by='b', error_type='debug')
+    #comperator.compare(group_by='nodes', error_type='debug')
     plt.show()
 
 
@@ -67,8 +68,23 @@ experiments = {}
 
 
 ########## 4 node ###########
-experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5)[0]
+#experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5)[0]
+#experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5)[0]
 
+#experiments = find_simple_baseline()
+
+# experiments[len(experiments)] = simple_multinode(n=1, h=0, sesop_batch_mult=1, lr=0.06)[0]
+# experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5, lr=0.06)[0]
+experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5, lr=0.06)[0]
+experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5, lr=0.06)[0]
+experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=5, lr=0.06)[0]
+experiments[len(experiments)] = simple_multinode(n=8, h=2, sesop_batch_mult=5, lr=0.03)[0]
+
+# experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5, lr=0.006)[0]
+# experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5, lr=0.006)[0]
+# experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=5, lr=0.006)[0]
+# experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=5, lr=0.03)[0]
+# experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5, lr=0.09)[0]
 
 # experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=5)[0]
 # experiments[len(experiments)] = simple_multinode(n=2, h=0, sesop_batch_mult=5)[0]

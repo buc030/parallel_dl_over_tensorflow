@@ -80,6 +80,7 @@ class HVar:
 
         self.zero_alpha = None
         if self.node_id == 0:
+            self.assert_alphas_are_zero()
             self.zero_alpha_op()
             self.update_history_op()
             for i in range(self.hSize):
@@ -89,7 +90,9 @@ class HVar:
             with tf.name_scope('pull_from_master'):
                 self.pull_from_master = tf.assign(self.var, self.last_snapshot)
             with tf.name_scope('push_to_master'):
-                self.push_to_master = tf.assign(self.replicas[self.node_id - 1], self.out())
+                self.push_to_master = tf.assign(self.replicas[self.node_id - 1], self.out() - self.last_snapshot)
+
+
 
     def out(self):
         if self.o is not None:
@@ -115,12 +118,37 @@ class HVar:
             self.o = self.var
             return self.o
 
+    def assert_alphas_are_zero(self):
+        if hasattr(self, 'assert_alphas_are_zero_op'):
+            return self.assert_alphas_are_zero_op
+
+        res = []
+        for a in self.replicas_aplha + self.history_aplha:
+            res.append(tf.Assert(tf.equal(a[0], 0), [a]))
+
+        self.assert_alphas_are_zero_op = res
+        return res
+
     #return an op that pushes the current progress into history, we need to do this before we optimize by alpha
     #To approximly maintain the expanding mandifold property.
     # This must be called when alpahs are zeros!!!
     def update_history_before_sesop_op(self):
         assert (self.node_id == 0)
-        return tf.assign(self.history[self.next_idx], self.out() - self.last_snapshot)
+        assert (self.node_id == 0)
+
+        #put the avrage progress inside the history (we will also have each of the progresses seperatly in the 'replicas' )
+        terms = [(self.out() - self.last_snapshot)]
+
+        for r in self.replicas:
+            terms.append(r)
+
+        assign_op = tf.assign(self.history[self.next_idx], tf.add_n(terms)/self.nodes)
+
+        #Now all the alphas are zero, and we want to start optimization from the avarage of the progresses (which is history[self.next_idx] at the moment)
+        #so we actually need var = snapshot + history[self.next_idx]
+        return [assign_op, with_dependencies(terms + [assign_op], tf.assign(self.var, self.last_snapshot + assign_op))]
+        #return assign_op
+
 
 
     # create an op that puts var of this node into its replica
