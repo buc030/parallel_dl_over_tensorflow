@@ -1,6 +1,7 @@
 
 import tensorflow as tf
 from tensorflow.python.ops import array_ops
+from my_external_optimizer import ScipyOptimizerInterface
 
 def _get_shape_tuple(tensor):
   return tuple(dim.value for dim in tensor.get_shape())
@@ -58,8 +59,8 @@ class NaturalGradientOptimizer:
         v = tf.reshape(self.v, [len(train_variables), 1])
         self.Fv = tf.matmul(self.F, v)
 
-        self.cg = tf.contrib.opt.ScipyOptimizerInterface(loss=self.loss, var_list=train_variables,
-            iteration_mult=None, hessp=self.fisher_information_matrix, \
+        self.cg = ScipyOptimizerInterface(loss=self.loss, var_list=train_variables,
+            hessp=self.fisher_information_matrix, \
             method='trust-ncg', options={'maxiter': 10})
 
     def minimize(self, sess, feed_dicts, loss_callback=None):

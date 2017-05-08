@@ -1,7 +1,7 @@
 
 import tensorflow as tf
-from summary_manager import SummaryManager
 import numpy as np
+import debug_utils
 
 from tensorflow.python.ops.control_flow_ops import with_dependencies
 
@@ -43,13 +43,12 @@ class HVar:
         self.history = []
         self.history_aplha = []
 
-        self.replicas = []
         self.replicas_aplha = []
 
         self.next_idx = 0
         self.op_cache = {}
         self.o = None
-        if self.model.experiment.getFlagValue('nodes') == 1 and self.model.experiment.getFlagValue('hSize') == 0:
+        if self.nodes == 1 and self.hSize == 0:
             return
 
         # snapshot is taken after each sesop. after a sesop, the snapshot will contain the value after sesop ran.
@@ -66,17 +65,20 @@ class HVar:
                             dtype=var.dtype.base_dtype, name='h_' + str(i)))
 
             with tf.name_scope('history_alpha'):
-                for i in range(self.hSize):
-                    self.history_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_h_' + str(i)))
-                        #SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_h', self.history_aplha[-1]))
-                    tf.summary.histogram('alphas_h', self.history_aplha[-1])
+                self.history_aplha = SharedVariablesManager.get_history_aplha(self.model, var)
+
+                # for i in range(self.hSize):
+                #     self.history_aplha.append(tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_h_' + str(i)))
+                #         #SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_h', self.history_aplha[-1]))
+                #     tf.summary.histogram('alphas_h', self.history_aplha[-1])
 
             with tf.name_scope('replicas_aplha'):
-                for i in range(self.nodes - 1):
-                    self.replicas_aplha.append(
-                        tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_n_' + str(i)))
+                self.replicas_aplha = SharedVariablesManager.get_replicas_aplha(self.model, var)
+                # for i in range(self.nodes - 1):
+                #     self.replicas_aplha.append(
+                #         tf.Variable(np.zeros(1), dtype=var.dtype.base_dtype, name='alpha_n_' + str(i)))
                     # SummaryManager.get().add_iter_summary(tf.summary.histogram('alphas_n', self.replicas_aplha[-1]))
-                    tf.summary.histogram('alpha_n_', self.replicas_aplha[-1])
+                    #tf.summary.histogram('alpha_n_', self.replicas_aplha[-1])
 
         self.zero_alpha = None
         if self.node_id == 0:
@@ -101,7 +103,11 @@ class HVar:
         with tf.name_scope(self.name + '_out'):
             #return an affine combination of the history vectors
             if self.hSize == 0 and self.nodes == 1:
+
                 self.o = self.var
+
+                if debug_utils.DEBUG_PRINT_INTERMEDIANTE_TENSORS:
+                    self.o = tf.Print(self.o, [self.o], 'var = ' + str(self.var.name) + ', node_id = ' + str(self.node_id))
                 return self.o
 
             if self.node_id == 0:
@@ -113,9 +119,16 @@ class HVar:
                     terms.append(r * a)
 
                 self.o = tf.add_n(terms)
+
+                if debug_utils.DEBUG_PRINT_INTERMEDIANTE_TENSORS:
+                    self.o = tf.Print(self.o, [self.o], 'var = ' + str(self.var.name) + ', node_id = ' + str(self.node_id))
                 return self.o
 
             self.o = self.var
+
+            if debug_utils.DEBUG_PRINT_INTERMEDIANTE_TENSORS:
+                self.o = tf.Print(self.o, [self.o], 'var = ' + str(self.var.name) + ', node_id = ' + str(self.node_id))
+
             return self.o
 
     def assert_alphas_are_zero(self):
@@ -129,11 +142,13 @@ class HVar:
         self.assert_alphas_are_zero_op = res
         return res
 
+    def get_index_of_last_direction(self):
+        return self.next_idx
+
     #return an op that pushes the current progress into history, we need to do this before we optimize by alpha
     #To approximly maintain the expanding mandifold property.
     # This must be called when alpahs are zeros!!!
     def update_history_before_sesop_op(self):
-        assert (self.node_id == 0)
         assert (self.node_id == 0)
 
         #put the avrage progress inside the history (we will also have each of the progresses seperatly in the 'replicas' )
@@ -147,8 +162,6 @@ class HVar:
         #Now all the alphas are zero, and we want to start optimization from the avarage of the progresses (which is history[self.next_idx] at the moment)
         #so we actually need var = snapshot + history[self.next_idx]
         return [assign_op, with_dependencies(terms + [assign_op], tf.assign(self.var, self.last_snapshot + assign_op))]
-        #return assign_op
-
 
 
     # create an op that puts var of this node into its replica

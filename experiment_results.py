@@ -1,6 +1,10 @@
 
 
+
 import matplotlib
+matplotlib.use('qt5agg')
+import matplotlib.pyplot as plt
+
 import numpy as np
 
 from os import listdir
@@ -9,7 +13,6 @@ import os
 import re
 
 import experiment
-import matplotlib.pyplot as plt
 
 class ExperimentResults:
     def getFlagValue(self, name):
@@ -28,6 +31,11 @@ class ExperimentResults:
         self.debug_sesop_on_sesop_batch_after = []
         self.loss_during_supspace_optimization = []
         self.grad_norm_during_supspace_optimization = []
+
+        #DEBUG the SGD part
+        self.sgd_epoch_grad_norms = []
+        self.sgd_epoch_weights_norms = []
+        self.sgd_epoch_input_norms = []
 
         self.epochTimes = []
         self.epochsDone = 0
@@ -72,7 +80,7 @@ class ExperimentResults:
         full_label = 'train(' + self.label + ')'
         if flag_names_to_use_in_label is not None:
             full_label = 'train(' + self.buildLabel(flag_names_to_use_in_label) + ')'
-        plt.plot(range(len(self.trainError[l[0]:l[1]])), self.trainError[l[0]:l[1]], '-', label=full_label)
+        plt.plot(range(len(self.trainError)), self.trainError, '-', label=full_label)
         plt.legend()
         plt.grid(True)
         plt.yscale('log')
@@ -88,9 +96,59 @@ class ExperimentResults:
 
         #print 'Test min error is ' + str(1 - min(self.testError[l[0]:l[1]]))
 
-        plt.plot(range(len(self.testError[l[0]:l[1]])), self.testError[l[0]:l[1]], '-', label=full_label)
+        plt.plot(range(len(self.testError)), self.testError, '-', label=full_label)
         # plt.plot(range(self.testError[:l].size), self.testError[:l], 'o')
         plt.legend()
+
+    """
+    The input norm during the sgd part
+    """
+    def plot_input_norm_during_sgd(self, legend):
+        plt.title('input norm during the sgd')
+        xs = []
+        for x1 in self.sgd_epoch_input_norms:
+            plt.axvline(x=len(xs), ls='-', color='g')
+            for x in x1:
+                xs.append(x)
+            plt.axvline(x=len(xs) - 1, ls='-', color='r')
+
+        plt.plot(xs, label=legend)
+        plt.grid(True)
+        plt.yscale('log')
+
+    """
+    The weights norm during the sgd part
+    """
+    def plot_weight_norm_during_sgd(self, legend):
+        plt.title('weights norm during the sgd')
+        xs = []
+        for x1 in self.sgd_epoch_weights_norms:
+            plt.axvline(x=len(xs), ls='-', color='g')
+            for x in x1:
+                xs.append(x)
+            plt.axvline(x=len(xs) - 1, ls='-', color='r')
+
+        plt.plot(xs, label=legend)
+        plt.grid(True)
+        plt.yscale('log')
+
+
+    """
+    The grad norm during the sgd part
+    """
+    def plot_grad_norm_during_sgd(self, legend):
+        plt.title('grad norm during the sgd')
+        xs = []
+        for x1 in self.sgd_epoch_grad_norms:
+            plt.axvline(x=len(xs), ls='-', color='g')
+            for x in x1:
+                xs.append(x)
+            plt.axvline(x=len(xs) - 1, ls='-', color='r')
+
+        plt.plot(xs, label=legend)
+        plt.grid(True)
+        plt.yscale('log')
+
 
     """
     The loss inside the subspace optimization

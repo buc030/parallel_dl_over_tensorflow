@@ -1,17 +1,14 @@
 
 
 import tensorflow as tf
-from tensorflow.python.training.queue_runner_impl import QueueRunner
-
 from seboost import SeboostOptimizer
 import experiments_manager
-import progressbar
-from experiment import Experiment
 from batch_provider import SimpleBatchProvider, CifarBatchProvider
 import numpy as np
 import tqdm
 import os
 
+import shutil
 class ExperimentRunner:
 
     def assert_all_experiments_has_same_flag(self, flagname):
@@ -43,18 +40,16 @@ class ExperimentRunner:
 
 
         self.assert_all_experiments_has_same_flag('dataset_size')
-        self.assert_all_experiments_has_same_flag('dim')
         self.assert_all_experiments_has_same_flag('epochs')
         self.assert_all_experiments_has_same_flag('b')
         self.assert_all_experiments_has_same_flag('sesop_freq')
         self.assert_all_experiments_has_same_flag('sesop_batch_size')
         self.assert_all_experiments_has_same_flag('model')
-        self.assert_all_experiments_has_same_flag('hSize')
         self.assert_all_experiments_has_same_flag('nodes')
 
         self.epochs = experiments[0].getFlagValue('epochs')
-        self.input_dim = experiments[0].getFlagValue('dim')
-        self.output_dim = experiments[0].getFlagValue('output_dim')
+        self.input_dim = experiments[0].getInputDim()
+        self.output_dim = experiments[0].getOutputDim()
 
         self.batch_size = experiments[0].getFlagValue('b')
 
@@ -70,7 +65,7 @@ class ExperimentRunner:
         models, losses, accuracies = [], [], []
         to_remove = []
         for e in self.experiments:
-            if len(e.results) > 0 and len(e.results[0].trainErrorPerItereation) >= e.getFlagValue('epochs')*(self.train_dataset_size/self.batch_size):
+            if self.force_rerun == False and len(e.results) > 0 and len(e.results[0].trainErrorPerItereation) >= e.getFlagValue('epochs')*(self.train_dataset_size/self.batch_size):
                 print 'Experiment ' + str(e) + ' is done! Removing it from run...'
                 to_remove.append(e)
 
@@ -175,8 +170,10 @@ class ExperimentRunner:
             #     optimizer.init_ops(sess)
 
             print 'Write graph into tensorboard'
-            writer = tf.summary.FileWriter('/tmp/generated_data/' + '1')
+            shutil.rmtree('/tmp/generated_data/1')
+            writer = tf.summary.FileWriter('/tmp/generated_data/1')
             writer.add_graph(sess.graph)
+            writer.flush()
 
             merged = tf.summary.merge_all()
             optimizer.writer = writer
@@ -244,8 +241,6 @@ class ExperimentRunner:
                     steps = {'accuracies': accuracies}
                     steps = sess.run(steps)
 
-                    # writer.add_summary(steps['merged'], epoch*(self.test_dataset_size / self.careless_batch_size) + i)
-                    # writer.flush()
 
                     test_error += np.array(steps['accuracies'])
                 test_error /= float(self.test_dataset_size / self.batch_size)
@@ -253,9 +248,10 @@ class ExperimentRunner:
 
                 print 'Dumping results....'
                 self.add_experiemnts_results(train_error, test_error)
-                self.dump_results()
-                for m in tqdm.tqdm(models):
-                    m.dump_checkpoint(sess)
+                if epoch % 10 == 0:
+                    self.dump_results()
+                # for m in tqdm.tqdm(models):
+                #     m.dump_checkpoint(sess)
 
                 print 'Start training Epoch #' + str([e.get_number_of_ran_epochs() for e in self.experiments])
                 print 'Training'
@@ -280,6 +276,7 @@ class ExperimentRunner:
             coord.request_stop()
             print '########### join ###########'
             coord.join(threads)
+            self.dump_results()
             print '########### after join ###########'
 
 
@@ -446,57 +443,43 @@ def find_simple_baseline():
     experiments = {}
 
     #0.06 is the winner
-    for lr in [0.09, 0.08, 0.07, 0.06, 0.05]:
+    for lr in [0.1, 0.09, 0.08, 0.07, 0.06, 0.05]:
         experiments[len(experiments)] = experiment.Experiment(
         {
             'model': 'simple',
             'b': 100,
             'lr': lr,
             'sesop_batch_size': 0,
-            'sesop_batch_mult': 1,
-            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'sesop_batch_mult': 10,
+            'sesop_freq': 1.0 / 200.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
             'hSize': 0,
             'nodes': 1,
-            'dim': 10,
-            'output_dim': 1,
-            'dataset_size': 5000,
-            'hidden_layers_num': 3,
-            'hidden_layers_size': 100,
-
-
-            'epochs': 30,
-            'num_residual_units': None
-
-
+            'dataset_size': 20000,
+            'hidden_layers_sizes': [6, 12, 8, 4, 1],
+            'epochs': 400,
         })
     return experiments
 
 
 
-def simple_multinode(n, h, sesop_batch_mult, lr):
+def simple_multinode(n, h, sesop_batch_mult, lr, hidden_layers_sizes):
     experiments = {}
     experiments[len(experiments)] = experiment.Experiment(
         {
             'model': 'simple',
             'b': 100,
-            #'lr': 0.06,
             'lr': lr,
             'sesop_batch_size': 0,
             'sesop_batch_mult': sesop_batch_mult,
-            'sesop_freq': 1.0 / 50.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'sesop_freq': 1.0 / 200.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
             'hSize': h,
             'nodes': n,
-            'dim': 10,
-            'output_dim': 1,
-            'dataset_size': 5000,
-            'hidden_layers_num': 3,
-            'hidden_layers_size': 100,
-
-
-            'epochs': 30,
-            'num_residual_units': None
-
-
+            'dataset_size': 20000,
+            'hidden_layers_sizes': hidden_layers_sizes,
+            'epochs': 100,
+            'DISABLE_VECTOR_BREAKING' : True,
+            'NORMALIZE_DIRECTIONS' : False
     })
+
     return experiments
 

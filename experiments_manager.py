@@ -3,8 +3,9 @@
 
 import pickle
 import os
-
 import utils
+import pandas
+import experiment
 
 #Manage the whereabout of the data of the experiments
 
@@ -31,6 +32,34 @@ class ExperimentsManager(object):
         self.metadata = {}
         self.refresh_metadata()
 
+
+    def get_experiment_by_id(self, id):
+        for k, v in self.metadata.items():
+            if id == v:
+                return k
+        return None
+
+    def print_experiments(self):
+        pretty_data = {}
+
+        for expr, id in self.metadata.items():
+            pretty_data[id] = []
+
+        for expr, id in self.metadata.items():
+            index = []
+            expr_data = []
+
+            for flag_name in experiment.Experiment.flag_names_iterator():
+                expr_data.append(expr.getFlagValue(flag_name))
+                index.append(flag_name)
+
+            expr_data.append(id)
+            index.append('id')
+            # print expr_data
+            pretty_data[id] = pandas.Series(expr_data, index=index)
+
+        return pandas.DataFrame(pretty_data)
+
     #private
 
     #in case another process added experiments and took away free indexes!
@@ -40,8 +69,9 @@ class ExperimentsManager(object):
                 loaded_metadata = pickle.load(f)
                 self.metadata.update(loaded_metadata)
         except:
-            raise
+
             print ExperimentsManager.METADATA_FILE + ' does not exist yet, programmer should uncomment the line that creates it'
+            raise
             self.dunp_metadata()
             try:
                 with open(ExperimentsManager.METADATA_FILE, 'rb') as f:
@@ -104,16 +134,29 @@ class ExperimentsManager(object):
 
         #TODO: add dump model weights
 
+    def delete_experiment(self, experiment):
+        path = self.lookup_experiment_path(experiment)
+        assert (path is not None)
+
+        os.remove(path)
+        del self.metadata[experiment]
+        self.dunp_metadata()
+
     def load_experiment(self, experiment):
         print 'experiment = ' + str(experiment)
         path = self.lookup_experiment_path(experiment)
         if path is None:
-            #assert(False)
+            print 'Experiment hasnt run yet!'
             return None
 
         utils.printInfo( 'Loading from ' + str(path))
         with open(path, 'rb') as f:
-            res = pickle.load(f)
+            try:
+                res = pickle.load(f)
+            except:
+                print 'File ' + str(path) + ' is corrupted! Removing it!'
+                self.delete_experiment(experiment)
+                raise
             #experiment.results = res.results
 
             # TODO: add load model weights

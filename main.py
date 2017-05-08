@@ -1,31 +1,45 @@
 
 
-import matplotlib.pyplot as plt
-import experiment
-import experiment_results
-import experiments_manager
-
-#from experiment_runner import find_cifar_baseline, find_cifar_history
-from experiment_runner import find_cifar_baseline, find_cifar_multinode, find_simple_baseline, \
-    ExperimentRunner, \
-    simple_multinode, simple
-
-
+import debug_utils
 import argparse
+import numpy as np
+import experiment
+import experiments_manager
+from experiment_runner import ExperimentRunner, simple_multinode
+
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    if v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
 
 parser = argparse.ArgumentParser(description='Run a simple experiment.')
 parser.add_argument('-history', type=int, nargs=1, required=True, help='history number (0 for SGD)')
 parser.add_argument('-n', type=int, nargs=1, required=True, help='nodes number')
 parser.add_argument('-lr', type=float, nargs=1, required=True, help='Starting learning rate')
 parser.add_argument('-sesop_batch_mult', type=int, nargs=1, required=True, help='Multiplier for sesop batch size')
-args = parser.parse_args()
 
+parser.add_argument('-NORMALIZE_DIRECTIONS', type=str2bool, nargs=1, required=True, help='')
+parser.add_argument('-DISABLE_VECTOR_BREAKING', type=str2bool, nargs=1, required=True, help='')
 
+# args = parser.parse_args()
 
 
 experiments = {}
 
-experiments = simple_multinode(n=args.n[0], h=args.history[0], sesop_batch_mult=args.sesop_batch_mult[0], lr=args.lr[0])
+
+
+
+
+
+for h in [1, 2, 4, 8, 16, 32, 64]:
+    experiments[len(experiments)] = simple_multinode(n=1, h=h, sesop_batch_mult=10, lr=0.7425, hidden_layers_sizes=[6, 60, 30, 10, 1])[0]
+
+
 runner = ExperimentRunner(experiments, force_rerun=True)
 runner.run()
 

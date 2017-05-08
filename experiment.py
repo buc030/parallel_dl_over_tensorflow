@@ -6,7 +6,7 @@ from model import SimpleModel, MnistModel, CifarModel
 import tensorflow as tf
 from batch_provider import SimpleBatchProvider, CifarBatchProvider
 from experiments_manager import ExperimentsManager
-
+import debug_utils
 #This defines the metaparameters and
 #store the results
 class Experiment:
@@ -17,22 +17,30 @@ class Experiment:
         'sesop_freq': float(1) / 100,
         'hSize': 0,
         'epochs': 200,
-        'dim': 10,
-        'output_dim': 1,
         'lr': 0.1,
         'dataset_size': 5000,
         'model': 'simple',
-        'hidden_layers_num': 1,
-        'hidden_layers_size': 10,
+        'hidden_layers_sizes': None,
         'nodes': 1,
-        'optimizer': 'sgd',
+        'base_optimizer': 'sgd',
         'num_residual_units': 9,
         'fixed_dropout_during_sesop': False,
         'fixed_bn_during_sesop': False,
-        'sesop_batch_mult' : 1
+        'sesop_batch_mult' : 1,
+        'subspace_optimizer' : 'BFGS',
+        'DISABLE_VECTOR_BREAKING' : debug_utils.DISABLE_VECTOR_BREAKING,
+        'NORMALIZE_DIRECTIONS' : debug_utils.NORMALIZE_DIRECTIONS
     }
 
     FLAGS_ALIASES = {'batch_size' : 'b'}
+
+    @classmethod
+    def flag_names_iterator(cls):
+        for k in Experiment.FLAGS_DEFAULTS.keys():
+            yield k
+
+    def has_data(self):
+        return len(self.results) > 0 and len(self.results[0].trainError) > 0
 
     def getCanonicalName(self, name):
         if name not in Experiment.FLAGS_ALIASES:
@@ -98,6 +106,15 @@ class Experiment:
     def __repr__(self):
         return str(self)
 
+    def getInputDim(self):
+        hidden_layers_sizes = self.getFlagValue('hidden_layers_sizes')
+        input_dim = hidden_layers_sizes[0]
+        return input_dim
+
+    def getOutputDim(self):
+        hidden_layers_sizes = self.getFlagValue('hidden_layers_sizes')
+        output_dim = hidden_layers_sizes[-1]
+        return output_dim
 
     def get_model_tensorboard_dir(self, model_idx):
         return ExperimentsManager.get().get_experiment_model_tensorboard_dir(self, model_idx)
@@ -131,7 +148,7 @@ class Experiment:
                     self.results.append(experiment_results.ExperimentResults(self.buildLabel(), self.flags))
                     gpu += 1
 
-        return gpu
+        return self.getFlagValue('nodes')
 
 
     def getDatasetSize(self):
@@ -169,6 +186,21 @@ class Experiment:
     def start_new_subspace_optimization(self):
         self.results[0].loss_during_supspace_optimization.append([])
         self.results[0].grad_norm_during_supspace_optimization.append([])
+
+
+    def push_sgd_epoch(self, model_idx):
+        self.results[model_idx].sgd_epoch_grad_norms.append([])
+        self.results[model_idx].sgd_epoch_weights_norms.append([])
+        self.results[model_idx].sgd_epoch_input_norms.append([])
+
+    def add_sgd_iter_input_norm(self, model_idx, norm):
+        self.results[model_idx].sgd_epoch_input_norms[-1].append(norm)
+
+    def add_sgd_iter_weight_norm(self, model_idx, norm):
+        self.results[model_idx].sgd_epoch_weights_norms[-1].append(norm)
+
+    def add_sgd_iter_grad_norm(self, model_idx, norm):
+        self.results[model_idx].sgd_epoch_grad_norms[-1].append(norm)
 
     def add_loss_during_supspace_optimization(self, loss):
         self.results[0].loss_during_supspace_optimization[-1].append(loss)

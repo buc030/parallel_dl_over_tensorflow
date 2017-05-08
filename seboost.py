@@ -1,20 +1,35 @@
 
 
-import tensorflow as tf
-import numpy as np
-#import argparse
-import sys
-import threading
-from threading import current_thread
 
-import experiments_manager
-from summary_manager import SummaryManager
+import sys
+
 from tf_utils import *
 from natural_gradient import NaturalGradientOptimizer
 
+from my_external_optimizer import ScipyOptimizerInterface
+
 import tqdm
+import debug_utils
+
+
 
 class SeboostOptimizerParams:
+    def get_optimizer(self, model, cg_var_list):
+        opt = model.experiment.getFlagValue('subspace_optimizer')
+
+        self.grad_norm = tf.global_norm(tf.gradients(model.loss(), cg_var_list))
+        self.grad_norm_placeholder = tf.placeholder(dtype=tf.float32)
+        if opt == 'newton':
+            import newton_optimizer
+            return newton_optimizer.NewtonOptimizer(model.loss()/self.grad_norm_placeholder, cg_var_list)
+        elif opt == 'CG':
+            return ScipyOptimizerInterface(loss=model.loss()/self.grad_norm_placeholder, var_list=cg_var_list, \
+                                           method='CG', options={'maxiter': 200 * len(cg_var_list), 'gtol': 1e-6})
+        elif opt == 'BFGS':
+            return ScipyOptimizerInterface(loss=model.loss()/self.grad_norm_placeholder, var_list=cg_var_list, \
+                                           method='BFGS', options={'maxiter': 200 * len(cg_var_list), 'gtol': 1e-6})
+        assert (False)
+
     def __init__(self, model):
 
         self.lr = model.experiment.getFlagValue('lr')
@@ -25,13 +40,8 @@ class SeboostOptimizerParams:
 
         self.cg_var_list = model.hvar_mgr.all_trainable_alphas()
         if len(self.cg_var_list) > 0:
-            self.cg = tf.contrib.opt.ScipyOptimizerInterface(loss=model.loss(), var_list=self.cg_var_list, iteration_mult=self.sesop_batch_mult,\
-                                                             method='BFGS', options={'maxiter': 200*len(self.cg_var_list), 'gtol' : 1e-6})
+            self.cg = self.get_optimizer(model, self.cg_var_list)
 
-        # if len(self.cg_var_list) > 0:
-        #     self.cg = NaturalGradientOptimizer(model.loss(), model.predictions, self.cg_var_list)
-
-#TODO: try big subspace with strong optimization
 
 #This runs the same optimization process for 'models' with corosponding metaparameters defined in 'experiments'
 #All the models see the exact same data!
@@ -58,6 +68,10 @@ class SeboostOptimizer:
 
 
         self.losses = [m.loss() for m in self.models]
+        self.grad_norms = [m.grad_norm for m in self.models]
+        self.weights_norms = [m.weights_norm for m in self.models]
+        self.input_norms = [m.input_norm for m in self.models]
+
         #self.train_steps = [p.train_step for p in self.params.values()]
         self.train_steps = []
         for m in self.models:
@@ -67,6 +81,10 @@ class SeboostOptimizer:
         self.curr_iter = 1
 
         self.loss_on_prev_sesop = None
+
+        for e in self.experiments:
+            for model_idx in range(len(e.models)):
+                e.push_sgd_epoch(model_idx)
 
     def run_epoch(self, sess):
 
@@ -80,12 +98,15 @@ class SeboostOptimizer:
 
     def run_simple_iter(self, sess):
         #print '############### RUNNING SIMPLE ITER ################'
-        _, losses = sess.run([self.train_steps, self.losses])
+        _, losses, grad_norms, weights_norms, input_norms = sess.run([self.train_steps, self.losses, self.grad_norms, self.weights_norms, self.input_norms])
 
         i = 0
         for e in self.experiments:
             for model_idx in range(len(e.models)):
                 e.add_iteration_train_error(model_idx, losses[i])
+                e.add_sgd_iter_grad_norm(model_idx, grad_norms[i])
+                e.add_sgd_iter_weight_norm(model_idx, weights_norms[i])
+                e.add_sgd_iter_input_norm(model_idx, input_norms[i])
                 i += 1
 
         self.curr_iter += 1
@@ -95,6 +116,9 @@ class SeboostOptimizer:
         if self.curr_iter % self.params.values()[0].sgd_steps != 0:
             return self.run_simple_iter(sess)
 
+        for e in self.experiments:
+            for model_idx in range(len(e.models)):
+                e.push_sgd_epoch(model_idx)
 
         # loss_before_sesop = self.models[0].calc_train_accuracy(sess, batch_size=self.batch_size,
         #                                           train_dataset_size=self.train_dataset_size)
@@ -112,7 +136,9 @@ class SeboostOptimizer:
         return res
 
     def dump_debug(self, sess, master_model, feed_dict, suffix):
-        return
+        if debug_utils.DEBUG_LEVEL < 2:
+            return
+
         with open('debug_' + suffix, 'w') as f:
             f.write('loss = ' + str(sess.run(master_model.loss(), feed_dict=feed_dict)) + '\n')
 
@@ -133,13 +159,11 @@ class SeboostOptimizer:
                 f.write('---------------------')
 
     def run_sesop(self, sess):
-        if self.experiments[0].getFlagValue('hSize') == 0 and self.experiments[0].getFlagValue('nodes') == 1:
-            self.run_simple_iter(sess)
-            self.curr_iter += 1
-            return None
-
 
         for e in self.experiments:
+            if e.getFlagValue('hSize') == 0 and e.getFlagValue('nodes') == 1:
+                self.run_simple_iter(sess)
+                continue
 
             master_model = e.models[0]
             worker_models = e.models[1:]
@@ -159,14 +183,11 @@ class SeboostOptimizer:
             #Now optimize by alpha
             master_model.batch_provider.set_data_source(sess, 'train')
 
-            feed_dicts = []
-            for i in range(master_model.experiment.sesop_batch_mult):
-                feed_dict = master_model.get_shared_feed(sess, worker_models)
-                feed_dicts.append(feed_dict)
+            feed_dicts = [master_model.get_shared_feed(sess, worker_models) for i in range(master_model.experiment.sesop_batch_mult)]
 
-            loss_b4_sesop_on_batch = sess.run(master_model.loss(), feed_dict=feed_dicts[0])
-
-            loss_b4_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size, train_dataset_size=self.train_dataset_size)
+            if debug_utils.DEBUG_LEVEL > 0:
+                loss_b4_sesop_on_batch = avarge_on_feed_dicts(sess=sess, additional_feed_dict={}, target_ops=[master_model.loss()], feed_dicts=feed_dicts)
+                loss_b4_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size, train_dataset_size=self.train_dataset_size)
 
             e.start_new_subspace_optimization()
             #loss_callback=debug_loss_callback
@@ -174,22 +195,35 @@ class SeboostOptimizer:
                 e.add_loss_during_supspace_optimization(loss)
                 e.add_grad_norm_during_supspace_optimization(np.linalg.norm(grad, 2))
 
+            #######################################################################
+            #######################################################################
+            ########################## MINIMIZE STAGE #############################
             print 'size of subspace = ' + str(len(self.params[master_model].cg_var_list))
-            self.params[master_model].cg.minimize(sess, feed_dicts=feed_dicts, loss_callback=debug_loss_callback)
 
-            loss_after_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size, train_dataset_size=self.train_dataset_size)
+            grad_norm = 1.0
+            if self.sesop_runs > e.getFlagValue('hSize') and e.getFlagValue('NORMALIZE_DIRECTIONS') == True:
+                normalize_directions_op = master_model.hvar_mgr.normalize_directions_ops()
+                sess.run(normalize_directions_op)
+                grad_norm = avarge_on_feed_dicts(sess=sess, additional_feed_dict={},
+                                                          target_ops=[self.params[master_model].grad_norm], feed_dicts=feed_dicts)
 
-            e.add_debug_sesop(0, loss_b4_sesop, loss_after_sesop)
-            e.add_debug_sesop_on_sesop_batch(0, loss_b4_sesop_on_batch, sess.run(master_model.loss(), feed_dict=feed_dicts[0]))
+            self.params[master_model].cg.minimize(sess, feed_dicts=feed_dicts, loss_callback=debug_loss_callback,
+                                                  additional_feed_dict={self.params[master_model].grad_norm_placeholder : grad_norm})
+            ############### DONE MINIMIZING, RESULTS NOW ARE IN ALPHA ##############
+            ########################################################################
+            ########################################################################
+
+            if debug_utils.DEBUG_LEVEL > 0:
+                loss_after_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size, train_dataset_size=self.train_dataset_size)
+                e.add_debug_sesop(0, loss_b4_sesop, loss_after_sesop)
+                e.add_debug_sesop_on_sesop_batch(0, loss_b4_sesop_on_batch, sess.run(master_model.loss(), feed_dict=feed_dicts[0]))
+
 
             sess.run(after_sesop) #after this 'snapshot' is updated with the result of the sesop
-
             sess.run(zero_alpha)
-
             #Now send the results back to the workers
             for worker in worker_models:
                 sess.run(worker.pull_from_master_op()) #assign(var, snapshot)
-
 
 
             self.dump_debug(sess, master_model, feed_dicts[0], 'master')

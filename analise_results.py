@@ -1,97 +1,207 @@
 
-
+import matplotlib
+matplotlib.use('qt5agg')
 import matplotlib.pyplot as plt
 import experiment
 import experiment_results
 import experiments_manager
+import sys
+import PyQt5
+from PyQt5.QtWidgets import QMainWindow, QApplication, QWidget, QAction, QTableWidget,QTableWidgetItem,QVBoxLayout, QMenu
+from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import pyqtSlot
+from PyQt5 import QtCore, QtGui
 
-#from experiment_runner import find_cifar_baseline, find_cifar_history
-from experiment_runner import find_cifar_baseline, find_cifar_multinode, \
-    find_simple_baseline, simple_multinode, simple
-def display_results(experiments):
+Qt = QtCore.Qt
 
-    loaded_experiments = {}
-    i = 0
-    for e in experiments.values():
-        loaded_experiments[i] = experiments_manager.ExperimentsManager.get().load_experiment(e)
-        print loaded_experiments[i]
-        print 'loaded_experiments[i] = ' + str(loaded_experiments[i].results)
-        i += 1
+class PandasModel(QtCore.QAbstractTableModel):
+    def __init__(self, data, parent=None):
+        QtCore.QAbstractTableModel.__init__(self, parent)
+        self._data = data
 
-    print str(loaded_experiments[0].results)
-    comperator = experiment_results.ExperimentComperator(loaded_experiments)
-    comperator.set_y_logscale(True)
+    def rowCount(self, parent=None):
+        return len(self._data.values)
 
+    def columnCount(self, parent=None):
+        return self._data.columns.size
 
-    # comperator.compare(group_by='lr', error_type='train_and_test')
-    # plt.show()
-
-    # comperator.compare(group_by='dataset_size', error_type='trainPerIteration')
-    # plt.show()
-
-    # comperator.compare(group_by='nodes', error_type='train')
-    # plt.show()
-    comperator.compare(group_by='b', error_type='debug')
-    #comperator.compare(group_by='nodes', error_type='debug')
-    plt.show()
-
-
-    bests = {}
-    j = 0
-    for i in [1,2,4,8]:
-        bests[j] = comperator.getBestTrainError(filter=lambda e: e.getFlagValue('nodes') == i)# and e.getFlagValue('lr') == 1.0/2**7)
-        j += 1
-
-    comperator = experiment_results.ExperimentComperator(bests)
-    comperator.compare(group_by='b')
-    #comperator.compare(group_by='nodes', error_type='train', filter=lambda e: e.getFlagValue('hidden_layers_num') > 0)
-    plt.show()
-
-
-experiments = {}
-
-#experiments = find_simple_baseline()
-# for h in [1, 2, 4, 8, 16]:
-#     experiments[len(experiments)] = simple_with_history_baseline(h=h, sesop_batch_mult=5)[0]
-
-# ########## 1 node ###########
-# experiments[len(experiments)] = simple_multinode(n=1, h=0, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=1, h=1, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=1, h=4, sesop_batch_mult=5)[0]
-#
-# ########## 2 node ###########
-# experiments[len(experiments)] = simple_multinode(n=2, h=0, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=2, h=1, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=2, h=4, sesop_batch_mult=5)[0]
-
-
-########## 4 node ###########
-#experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5)[0]
-#experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5)[0]
-
-#experiments = find_simple_baseline()
-
-# experiments[len(experiments)] = simple_multinode(n=1, h=0, sesop_batch_mult=1, lr=0.06)[0]
-# experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5, lr=0.06)[0]
-experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5, lr=0.06)[0]
-experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5, lr=0.06)[0]
-experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=5, lr=0.06)[0]
-experiments[len(experiments)] = simple_multinode(n=8, h=2, sesop_batch_mult=5, lr=0.03)[0]
-
-# experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5, lr=0.006)[0]
-# experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5, lr=0.006)[0]
-# experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=5, lr=0.006)[0]
-# experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=5, lr=0.03)[0]
-# experiments[len(experiments)] = simple_multinode(n=1, h=2, sesop_batch_mult=5, lr=0.09)[0]
-
-# experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=2, h=0, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=2, h=1, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=2, h=2, sesop_batch_mult=5)[0]
-# experiments[len(experiments)] = simple_multinode(n=2, h=4, sesop_batch_mult=5)[0]
+    def data(self, index, role=Qt.DisplayRole):
+        if index.isValid():
+            if role == Qt.DisplayRole:
+                return QtCore.QVariant(str(
+                    self._data.values[index.row()][index.column()]))
+        return QtCore.QVariant()
 
 
 
-display_results(experiments)
+class App(QWidget):
+
+    def __init__(self):
+        super(App, self).__init__()
+        self.title = 'Experiments viewer'
+        self.left = 0
+        self.top = 0
+        self.width = 1200
+        self.height = 800
+        self.initUI()
+        self.delete_safegaurd = None
+
+        # refreshAction = QAction('Refresh', self)
+        # refreshAction.triggered.connect(self.refresh)
+        # self.toolbar = self.addToolBar('Refresh')
+        # self.toolbar.addAction(refreshAction)
+
+
+    def initUI(self):
+        self.setWindowTitle(self.title)
+        self.setGeometry(self.left, self.top, self.width, self.height)
+
+        self.createTable()
+
+        # Add box layout, add table to box layout and add box layout to widget
+        self.layout = QVBoxLayout()
+        self.layout.addWidget(self.tableWidget)
+        self.setLayout(self.layout)
+
+        # Show widget
+        self.show()
+
+    def update_from_df(self, df):
+        self.tableWidget.clear()
+        for i in range(len(df.index)):
+            for j in range(len(df.columns)):
+                item = QTableWidgetItem(str(df.iget_value(i, j)))
+                self.tableWidget.setItem(i, j, item)
+
+        for i in range(len(df.index)):
+            flagname = df.index[i]
+            self.tableWidget.setVerticalHeaderItem(i, QTableWidgetItem(flagname))
+
+        mgr = experiments_manager.ExperimentsManager()
+        for j in range(len(df.columns)):
+            expr_id = self.get_experiment_id_by_widget_item(self.tableWidget.item(0, j))
+            expr = self.get_experiment_by_id(expr_id)
+            #expr = mgr.load_experiment(expr)
+            if len(expr.results) == 0:
+                epochs_ran = 0
+            else:
+                epochs_ran = len(expr.results[0].trainError)
+            item = QTableWidgetItem(str(epochs_ran))
+            self.tableWidget.setItem(len(df.index), j, item)
+
+        self.tableWidget.setVerticalHeaderItem(len(df.index), QTableWidgetItem('ran epochs'))
+
+    def refresh(self):
+        mgr = experiments_manager.ExperimentsManager()
+        df = mgr.print_experiments()
+        self.update_from_df(df)
+
+    def createTable(self):
+       # Create table
+        mgr = experiments_manager.ExperimentsManager()
+        df = mgr.print_experiments()
+
+        self.tableWidget = QTableWidget(parent=self)
+
+
+        self.tableWidget.setColumnCount(len(df.columns))
+        self.tableWidget.setRowCount(len(df.index) + 1)
+
+        self.update_from_df(df)
+        self.tableWidget.move(0,0)
+
+
+        # table selection change
+        self.tableWidget.doubleClicked.connect(self.on_click)
+
+    def get_experiment_by_id(self, id):
+        mgr = experiments_manager.ExperimentsManager()
+        return mgr.get_experiment_by_id(id)
+
+    def get_experiment_id_by_widget_item(self, widgetItem):
+
+        id_idx = None
+        for i in range(1000):
+            if self.tableWidget.verticalHeaderItem(i) is not None and self.tableWidget.verticalHeaderItem(i).data(0) == 'id':
+                id_idx = int(i)
+                break
+
+        return int(self.tableWidget.item(id_idx, widgetItem.column()).data(0))
+
+    def get_selected_experiment_ids(self):
+        ids = []
+        #first find the index of where the id is
+        for currentQTableWidgetItem in self.tableWidget.selectedItems():
+            id = self.get_experiment_id_by_widget_item(currentQTableWidgetItem)
+            ids.append(int(id))
+        return ids
+
+    def delete_experiments(self, event):
+        if self.delete_safegaurd is None:
+            print 'Safegaurd, delete again to activate!'
+            self.delete_safegaurd = 1
+            return
+
+        ids = self.get_selected_experiment_ids()
+        mgr = experiments_manager.ExperimentsManager()
+        print 'deleting ' + str(ids)
+        for id in ids:
+            e = self.get_experiment_by_id(id)
+            mgr.delete_experiment(e)
+
+        df = mgr.print_experiments()
+        self.update_from_df(df)
+
+    def contextMenuEvent(self, event):
+        self.menu = QMenu(self)
+
+        for plot_type in ['train', 'test', 'debug', 'train_and_test']:
+            showAction = PyQt5.QtWidgets.QAction('Show ' + plot_type, self)
+            showAction.triggered.connect(lambda e, plot_type=plot_type: self.display_selected_results(plot_type))
+            self.menu.addAction(showAction)
+
+        deleteAction = PyQt5.QtWidgets.QAction('Delete', self)
+        deleteAction.triggered.connect(lambda: self.delete_experiments(event))
+        self.menu.addAction(deleteAction)
+
+        # add other required actions
+        self.menu.popup(QtGui.QCursor.pos())
+
+    def display_selected_results(self, plot_type='train'):
+
+        experiments = {}
+        ids = self.get_selected_experiment_ids()
+        for id in ids:
+            experiments[len(experiments)] = self.get_experiment_by_id(id)
+            assert (experiments[len(experiments) - 1] is not None)
+
+
+        loaded_experiments = {}
+        i = 0
+        for e in experiments.values():
+            loaded_experiments[i] = experiments_manager.ExperimentsManager.get().load_experiment(e)
+            if not loaded_experiments[i].has_data():
+                print '###############################################'
+                print 'No data for expr ' + str(loaded_experiments[i])
+                print '###############################################'
+                del loaded_experiments[i]
+                continue
+            i += 1
+
+        comperator = experiment_results.ExperimentComperator(loaded_experiments)
+        comperator.set_y_logscale(True)
+
+        comperator.compare(group_by='b', error_type=plot_type)
+        plt.show()
+
+
+    @pyqtSlot()
+    def on_click(self):
+        self.display_selected_results()
+
+
+app = QApplication(sys.argv)
+ex = App()
+sys.exit(app.exec_())
+
+

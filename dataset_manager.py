@@ -22,9 +22,9 @@ def fc_layer(input, n_in, n_out, activation=True):
     return out
 
 
-def build_model(x, dim, out_dim):
+def build_model(x, dim, out_dim, layers_num=4):
     layers = [fc_layer(x, dim, 8*dim)]
-    for i in range(1):
+    for i in range(layers_num):
         layers.append(fc_layer(layers[-1], 8*dim, 8*dim))
     layers.append(fc_layer(layers[-1], 8*dim, out_dim, False))
     model_out = layers[-1]
@@ -46,12 +46,15 @@ def generate_random_data(input_dim, output_dim, n):
     #
     #     cov[i][j] = 0
 
-    training_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
-    testing_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
+    # training_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
+    # testing_data = np.random.multivariate_normal(np.zeros(input_dim), cov, n)
+
+    training_data = np.random.randn(n, input_dim)
+    testing_data = np.random.randn(n, input_dim)
 
     with tf.name_scope('generating_data'):
         x = tf.placeholder(tf.float32, shape=[None, input_dim], name='x')
-        data_model_out = build_model(x, input_dim, input_dim)
+        data_model_out = build_model(x, input_dim, input_dim, 1) #the data model is not deep, to have pretty scattered data
         label_model_out = build_model(x, input_dim, output_dim)
 
         #with tf.Session('grpc://' + tf_server, config=config) as sess:

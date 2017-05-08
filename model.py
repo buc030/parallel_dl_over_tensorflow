@@ -2,12 +2,10 @@
 import tensorflow as tf
 from summary_manager import SummaryManager
 from h_var import HVar
-from experiments_manager import ExperimentsManager
-
 import utils
 from utils import check_create_dir
-from tensorflow.python.ops import data_flow_ops
 import numpy as np
+import debug_utils
 
 class FCLayer:
     def __init__(self, input, n_in, n_out, model, prefix, activation=True):
@@ -94,10 +92,16 @@ class Model(object):
         def all_trainable_alphas(self):
             alphas = []
             for hvar in self.all_hvars:
-                #SV TODO: #SV DEBUG : add optimization on hvar.replicas_aplha
                 alphas.extend(hvar.replicas_aplha + hvar.history_aplha)
                 #alphas.extend(hvar.history_aplha)
-            return alphas
+
+            res = []
+            #remoove duplications
+            for var in alphas:
+                if var not in res:
+                    res.append(var)
+
+            return res
 
         # all the regular weights to be trained
         def all_trainable_weights(self):
@@ -106,6 +110,35 @@ class Model(object):
                 weights.append(hvar.var)
             return weights
 
+        def normalize_directions_ops(self):
+            if not hasattr(self, '__normalize_directions_ops'):
+                self.__normalize_directions_ops = {}
+                for index in self.model.hSize:
+                    terms = []
+                    for hvar in self.all_hvars:
+                        terms.append(hvar.history[index])
+
+                    norm = tf.global_norm(terms)
+                    vectors_to_normalize = {} #remove duplicates using a hash table
+                    for hvar in self.all_hvars:
+                        for d in hvar.history + hvar.replicas:
+                            vectors_to_normalize[d] = 0
+
+                    operations = []
+                    for d in vectors_to_normalize.keys():
+                        #make all direction vectors to be in the same size of the last progress:
+                        operations.append(tf.assign(d, (d / tf.norm(d))*norm ))
+
+                    self.__normalize_directions_ops[index] = operations
+
+            prev_index = None
+            for hvar in self.all_hvars:
+                index = hvar.get_index_of_last_direction()
+                assert (prev_index is None or prev_index == index)
+                prev_index = index
+
+            assert (prev_index is not None)
+            return self.__normalize_directions_ops[prev_index]
         def all_history_update_ops(self):
             b4_sesop = []
             after_sesop = []
@@ -155,13 +188,15 @@ class Model(object):
     def __init__(self, experiment, batch_provider, node_id):
         self.experiment = experiment
         self.node_id = node_id
+        self.nodes = experiment.getFlagValue('nodes')
+        self.hSize = experiment.getFlagValue('hSize')
         self.saver = None
         #print 'node_id = ' + str(node_id)
         #print '-------------------------'
 
         self.hvar_mgr = Model.HVarManager(self)  # every experiment has its own hvar collection and summary collection.
 
-        self.tensorboard_dir = ExperimentsManager().get_experiment_model_tensorboard_dir(self.experiment, self.node_id)
+        self.tensorboard_dir = self.experiment.get_model_tensorboard_dir(self.node_id)
         self.summary_mgr = SummaryManager(self.tensorboard_dir)
 
         self.batch_provider = batch_provider
@@ -208,32 +243,28 @@ class SimpleModel(Model):
         super(SimpleModel, self).__init__(experiment, batch_provider, node_id)
         assert (experiment.getFlagValue('model') == 'simple')
 
-
-        input_dim = experiment.getFlagValue('dim')
-        output_dim = experiment.getFlagValue('output_dim')
-
-        hidden_layers_num = experiment.getFlagValue('hidden_layers_num')
-        hidden_layers_size = experiment.getFlagValue('hidden_layers_size')
+        hidden_layers_sizes = experiment.getFlagValue('hidden_layers_sizes')
+        input_dim = experiment.getInputDim()
 
         #build layers:
         with tf.variable_scope('model_' + str(self.node_id)):
-            self.layers = []
-            self.layers.append(FCLayer(self.input, input_dim, hidden_layers_size, self, 'FC_'  + str(len(self.layers))))
+            self.layers = [FCLayer(self.input, input_dim, hidden_layers_sizes[1], self, 'FC_'  + str(0))]
 
-            for i in range(hidden_layers_num):
-                self.layers.append(FCLayer(self.layers[-1].out, hidden_layers_size, hidden_layers_size, self, 'FC_' + str(len(self.layers))))
-
-            self.layers.append(FCLayer(self.layers[-1].out, hidden_layers_size, output_dim, self, 'FC_' + str(len(self.layers)), False))
+            for i in range(1, len(hidden_layers_sizes) - 1):
+                self.layers.append(
+                    FCLayer(self.layers[-1].out, hidden_layers_sizes[i],
+                            hidden_layers_sizes[i + 1], self, 'FC_' + str(len(self.layers)), i == len(hidden_layers_sizes) - 2))
 
             self.model_out = self.layers[-1].out
 
+            # when log is true we build a model for training!
 
-        # when log is true we build a model for training!
+            loss_per_sample = tf.squared_difference(self.model_out, self.label, name='loss_per_sample')
+            self._loss = tf.reduce_mean(loss_per_sample, name='loss')
 
-        loss_per_sample = tf.squared_difference(self.model_out, self.label, name='loss_per_sample')
-        self._loss = tf.reduce_mean(loss_per_sample, name='loss')
+            self.build_train_op()
 
-        self.build_train_op()
+            self.input_norm = tf.global_norm([self.input, self.label])
 
 
     def get_extra_train_ops(self):
@@ -243,16 +274,31 @@ class SimpleModel(Model):
         sess.run(self.div_learning_rate_op, feed_dict={self.lrn_rate_divide_factor: factor})
 
     def build_train_op(self):
-        lrn_rate = tf.Variable(initial_value=self.experiment.getFlagValue('lr'), trainable=False, dtype=tf.float32,
+        self.lrn_rate = tf.Variable(initial_value=self.experiment.getFlagValue('lr'), trainable=False, dtype=tf.float32,
                                name='model_start_learning_rate')  # tf.constant(self.hps.lrn_rate, tf.float32)
 
-        self.lrn_rate = lrn_rate
         self.lrn_rate_divide_factor = tf.placeholder(dtype=tf.float32)
         self.div_learning_rate_op = tf.assign(self.lrn_rate, self.lrn_rate/self.lrn_rate_divide_factor)
 
         trainable_variables = self.hvar_mgr.all_trainable_weights()
         grads = tf.gradients(self._loss, trainable_variables)
-        optimizer = tf.train.GradientDescentOptimizer(self.lrn_rate)
+        #grads = [tf.clip_by_value(grad, -1., 1.) for grad in grads]
+
+        if self.experiment.getFlagValue('base_optimizer') == 'sgd':
+            optimizer = tf.train.GradientDescentOptimizer(self.lrn_rate)
+        elif self.experiment.getFlagValue('base_optimizer') == 'momentom':
+            optimizer = tf.train.MomentumOptimizer(self.lrn_rate, 0.9)
+        elif self.experiment.getFlagValue('base_optimizer') == 'adagrad':
+            global_step = tf.Variable(0, name='global_step', trainable=False)
+            optimizer = tf.train.AdagradDAOptimizer(self.lrn_rate, global_step)
+        else:
+            assert(False)
+
+        self.grad_norm = tf.global_norm(grads)
+        self.weights_norm = tf.global_norm(trainable_variables)
+
+        if debug_utils.DEBUG_PRINT_GRADIENT_NORMS:
+            grads[0] = tf.Print(grads[0], [tf.global_norm(grads)], 'Norm of gradient of node ' + str(self.node_id) + ' : ')
 
         apply_op = optimizer.apply_gradients(
             zip(grads, trainable_variables), name='train_step')
