@@ -6,6 +6,7 @@ import utils
 from utils import check_create_dir
 import numpy as np
 import debug_utils
+import tqdm
 
 class FCLayer:
     def __init__(self, input, n_in, n_out, model, prefix, activation=True):
@@ -111,34 +112,45 @@ class Model(object):
             return weights
 
         def normalize_directions_ops(self):
-            if not hasattr(self, '__normalize_directions_ops'):
+            if True or self.model.hSize == 0:
+                return []
+            try:
+                prev_index = None
+                for hvar in self.all_hvars:
+                    #update_history_op has already increased last index, do we need the prev vector
+                    index = hvar.get_index_of_last_direction()
+                    index = (index - 1) % self.model.hSize
+                    assert (prev_index is None or prev_index == index)
+                    prev_index = index
+
+                assert (prev_index is not None)
+                return self.__normalize_directions_ops[prev_index]
+            except AttributeError:
                 self.__normalize_directions_ops = {}
-                for index in self.model.hSize:
+                vectors_to_normalize = {}  # remove duplicates using a hash table
+                for hvar in self.all_hvars:
+                    for d in hvar.history + hvar.replicas:
+                        vectors_to_normalize[d] = 0
+
+                print 'Building normalization operators. this may take a while'
+                for index in tqdm.tqdm(range(self.model.hSize)):
                     terms = []
                     for hvar in self.all_hvars:
                         terms.append(hvar.history[index])
 
+                    #TODO: put this ops on the same gpu as the model
+                    #with tf.device('/gpu:' + str(self.model.gpu)):
                     norm = tf.global_norm(terms)
-                    vectors_to_normalize = {} #remove duplicates using a hash table
-                    for hvar in self.all_hvars:
-                        for d in hvar.history + hvar.replicas:
-                            vectors_to_normalize[d] = 0
 
                     operations = []
+                    #with tf.device('/gpu:' + str(self.model.gpu)):
                     for d in vectors_to_normalize.keys():
                         #make all direction vectors to be in the same size of the last progress:
-                        operations.append(tf.assign(d, (d / tf.norm(d))*norm ))
+                        operations.append(tf.assign(d, (d / (tf.norm(d) + 1e-10))*norm ))
 
                     self.__normalize_directions_ops[index] = operations
 
-            prev_index = None
-            for hvar in self.all_hvars:
-                index = hvar.get_index_of_last_direction()
-                assert (prev_index is None or prev_index == index)
-                prev_index = index
 
-            assert (prev_index is not None)
-            return self.__normalize_directions_ops[prev_index]
         def all_history_update_ops(self):
             b4_sesop = []
             after_sesop = []
@@ -177,6 +189,7 @@ class Model(object):
     #self dontate a batch to be used by all.
     def get_shared_feed(self, sess, models):
         x, y = sess.run([self.input, self.label])
+
         res = {self.input: x, self.label: y}
         for m in models:
             res[m.input] = x
@@ -253,7 +266,7 @@ class SimpleModel(Model):
             for i in range(1, len(hidden_layers_sizes) - 1):
                 self.layers.append(
                     FCLayer(self.layers[-1].out, hidden_layers_sizes[i],
-                            hidden_layers_sizes[i + 1], self, 'FC_' + str(len(self.layers)), i == len(hidden_layers_sizes) - 2))
+                            hidden_layers_sizes[i + 1], self, 'FC_' + str(len(self.layers)), i < len(hidden_layers_sizes) - 2))
 
             self.model_out = self.layers[-1].out
 
@@ -266,6 +279,8 @@ class SimpleModel(Model):
 
             self.input_norm = tf.global_norm([self.input, self.label])
 
+            self.hvar_mgr.normalize_directions_ops()
+
 
     def get_extra_train_ops(self):
         return []
@@ -274,8 +289,15 @@ class SimpleModel(Model):
         sess.run(self.div_learning_rate_op, feed_dict={self.lrn_rate_divide_factor: factor})
 
     def build_train_op(self):
-        self.lrn_rate = tf.Variable(initial_value=self.experiment.getFlagValue('lr'), trainable=False, dtype=tf.float32,
+
+        if self.experiment.getFlagValue('learning_rate_per_node') == True:
+            lr = np.linspace(self.experiment.getFlagValue('lr'), 0.001, self.nodes)[self.node_id]
+        else:
+            lr = self.experiment.getFlagValue('lr')
+
+        self.lrn_rate = tf.Variable(initial_value=lr, trainable=False, dtype=tf.float32,
                                name='model_start_learning_rate')  # tf.constant(self.hps.lrn_rate, tf.float32)
+
 
         self.lrn_rate_divide_factor = tf.placeholder(dtype=tf.float32)
         self.div_learning_rate_op = tf.assign(self.lrn_rate, self.lrn_rate/self.lrn_rate_divide_factor)

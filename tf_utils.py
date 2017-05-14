@@ -89,22 +89,39 @@ class CustomRunner(object):
     def set_data_source(self, sess, data_source_idx):
         sess.run(self.set_data_source_op[data_source_idx])
 
+    def set_deque_batch_size(self, sess, new_batch_size):
+        sess.run(self.set_deque_batch_size_op, feed_dict={self.batch_size_tf_placeholder : new_batch_size})
+
     def get_inputs(self):
-        images_batch, labels_batch = self.curr_queue.dequeue_many(self.batch_size)
+        images_batch, labels_batch = self.curr_queue.dequeue_many(self.batch_size_tf_var)
         return images_batch, labels_batch
 
     def __init__(self, train_features, train_labels, test_features, test_labels, batch_size):
-        self.train_features = train_features
-        self.train_labels = train_labels
+        self.train_features = train_features[10000:]
+        self.train_labels = train_labels[10000:]
+
+        self.sesop_train_features = train_features[:10000]
+        self.sesop_train_labels = train_labels[:10000]
+
+
         self.test_features = test_features
         self.test_labels = test_labels
         self.batch_size = batch_size
+
+
+        self.batch_size_tf_var = tf.Variable(self.batch_size)
+        self.batch_size_tf_placeholder = tf.placeholder(tf.int32)
+        self.set_deque_batch_size_op = tf.assign(self.batch_size_tf_var, self.batch_size_tf_placeholder)
+
         self.dim = self.train_features.shape[1]
 
         self.label_dim = self.train_labels.shape[1]
 
         self.train_dataX = tf.placeholder(dtype=tf.float32, shape=[None, self.dim])
         self.train_dataY = tf.placeholder(dtype=tf.float32, shape=[None, self.label_dim])
+
+        self.sesop_train_dataX = tf.placeholder(dtype=tf.float32, shape=[None, self.dim])
+        self.sesop_train_dataY = tf.placeholder(dtype=tf.float32, shape=[None, self.label_dim])
 
         self.test_dataX = tf.placeholder(dtype=tf.float32, shape=[None, self.dim])
         self.test_dataY = tf.placeholder(dtype=tf.float32, shape=[None, self.label_dim])
@@ -119,26 +136,47 @@ class CustomRunner(object):
 
         self.train_queue = tf.FIFOQueue(shapes=[[self.dim], [self.label_dim]],
                                        dtypes=[tf.float32, tf.float32],
-                                       capacity=6000)
+                                       capacity=50000)
+
+        self.sesop_train_queue = tf.FIFOQueue(shapes=[[self.dim], [self.label_dim]],
+                                        dtypes=[tf.float32, tf.float32],
+                                        capacity=50000)
 
         self.test_queue = tf.FIFOQueue(shapes=[[self.dim], [self.label_dim]],
                                        dtypes=[tf.float32, tf.float32],
-                                       capacity=5000)
+                                       capacity=50000)
 
         #0 mean test, 1 mean train
         self.data_source_idx = tf.Variable(tf.cast(1, tf.int32), trainable=False, name='data_source_idx')
-        self.set_data_source_op = [tf.assign(self.data_source_idx, 0), tf.assign(self.data_source_idx, 1)]
+        self.set_data_source_op = [tf.assign(self.data_source_idx, 0), tf.assign(self.data_source_idx, 1), tf.assign(self.data_source_idx, 2)]
 
         self.curr_queue = tf.QueueBase.from_list(tf.cast(self.data_source_idx, tf.int32),
-                                       [self.test_queue, self.train_queue])
+                                       [self.test_queue, self.train_queue, self.sesop_train_queue])
 
         # The symbolic operation to add data to the queue
         # we could do some preprocessing here or do it in numpy. In this example
         # we do the scaling in numpy
         self.train_enqueue_op = self.train_queue.enqueue_many([self.train_dataX, self.train_dataY])
+        self.sesop_train_enqueue_op = self.sesop_train_queue.enqueue_many([self.sesop_train_dataX, self.sesop_train_dataY])
         self.test_enqueue_op = self.test_queue.enqueue_many([self.test_dataX, self.test_dataY])
 
         #self.train_generator_lock = threading.Lock()
+
+    def sesop_train_data_iterator(self):
+        """ A simple data iterator """
+        batch_idx = 0
+        while True:
+            # shuffle labels and features
+            idxs = np.arange(0, len(self.sesop_train_features))
+            np.random.shuffle(idxs)
+            shuf_features = self.sesop_train_features[idxs]
+            shuf_labels = self.sesop_train_labels[idxs]
+            for batch_idx in range(0, len(self.sesop_train_features), self.batch_size):
+                images_batch = shuf_features[batch_idx:batch_idx + self.batch_size]
+                images_batch = images_batch.astype("float32")
+                labels_batch = shuf_labels[batch_idx:batch_idx + self.batch_size]
+                yield images_batch, labels_batch
+
 
     def train_data_iterator(self):
         """ A simple data iterator """
@@ -165,17 +203,15 @@ class CustomRunner(object):
                 labels_batch = self.test_labels[batch_idx:batch_idx + self.batch_size]
                 yield images_batch, labels_batch
 
+    def sesop_train_thread_main(self, sess):
+        for dataX, dataY in self.sesop_train_data_iterator():
+            sess.run(self.sesop_train_enqueue_op, feed_dict={self.sesop_train_dataX : dataX, self.sesop_train_dataY : dataY})
+
     def train_thread_main(self, sess):
-        """
-        Function run on alternate thread. Basically, keep adding data to the queue.
-        """
         for dataX, dataY in self.train_data_iterator():
             sess.run(self.train_enqueue_op, feed_dict={self.train_dataX : dataX, self.train_dataY : dataY})
 
     def test_thread_main(self, sess):
-        """
-        Function run on alternate thread. Basically, keep adding data to the queue.
-        """
         for dataX, dataY in self.test_data_iterator():
             sess.run(self.test_enqueue_op, feed_dict={self.test_dataX : dataX, self.test_dataY : dataY})
 
@@ -184,6 +220,12 @@ class CustomRunner(object):
         threads = []
         for n in range(n_train_threads):
             t = threading.Thread(target=self.train_thread_main, args=(sess,))
+            t.daemon = True # thread will close when parent quits
+            t.start()
+            threads.append(t)
+
+        for n in range(1):
+            t = threading.Thread(target=self.sesop_train_thread_main, args=(sess,))
             t.daemon = True # thread will close when parent quits
             t.start()
             threads.append(t)

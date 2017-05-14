@@ -44,7 +44,7 @@ class SharedVariablesManager:
     @classmethod
     def get_history_aplha(cls, model, var):
         #No vector breaking
-        if debug_utils.DISABLE_VECTOR_BREAKING == False or model not in SharedVariablesManager.history_aplhas:
+        if model.experiment.getFlagValue('DISABLE_VECTOR_BREAKING') == False or model not in SharedVariablesManager.history_aplhas:
             hSize = model.experiment.getFlagValue('hSize')
             history_aplha = []
             for i in range(hSize):
@@ -57,7 +57,7 @@ class SharedVariablesManager:
     @classmethod
     def get_replicas_aplha(cls, model, var):
         # No vector breaking
-        if debug_utils.DISABLE_VECTOR_BREAKING == False or model not in SharedVariablesManager.replicas_aplhas:
+        if model.experiment.getFlagValue('DISABLE_VECTOR_BREAKING') == False or model not in SharedVariablesManager.replicas_aplhas:
             nodes = model.experiment.getFlagValue('nodes')
             replicas_aplha = []
             for i in range(nodes - 1):

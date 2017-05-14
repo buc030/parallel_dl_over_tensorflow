@@ -1,11 +1,11 @@
 
 
-
-import pickle
 import os
 import utils
 import pandas
 import experiment
+import shutil
+import cPickle as pickle
 
 #Manage the whereabout of the data of the experiments
 
@@ -14,6 +14,7 @@ class ExperimentsManager(object):
 
     BASE_PATH = '/home/shai/ExperimentsManager/'
     METADATA_FILE = BASE_PATH + 'metadata'
+    METADATA_BACKUP_FILE = METADATA_FILE + '.backup'
     TENSOR_BOARD_DIRS = BASE_PATH + 'TensorBoard/'
     MODEL_CHECKPOINT_DIRS = BASE_PATH + 'ModelCheckpoints/'
 
@@ -29,8 +30,10 @@ class ExperimentsManager(object):
                 if exc.errno != os.errno.EEXIST:
                     raise
 
+
         self.metadata = {}
         self.refresh_metadata()
+        shutil.copyfile(ExperimentsManager.METADATA_FILE, ExperimentsManager.METADATA_BACKUP_FILE)
 
 
     def get_experiment_by_id(self, id):
@@ -83,7 +86,10 @@ class ExperimentsManager(object):
 
     def dunp_metadata(self):
         with open(ExperimentsManager.METADATA_FILE, 'wb') as f:
-            pickle.dump(self.metadata, f)
+            thin_metadata = {}
+            for e, _id in self.metadata.items():
+                thin_metadata[experiment.Experiment(e.flags)] = _id
+            pickle.dump(thin_metadata, f)
 
     def find_free_index(self):
         if len(self.metadata.values()) == 0:
@@ -138,9 +144,16 @@ class ExperimentsManager(object):
         path = self.lookup_experiment_path(experiment)
         assert (path is not None)
 
-        os.remove(path)
         del self.metadata[experiment]
         self.dunp_metadata()
+
+        try:
+            os.remove(path)
+        except:
+            print 'Path didnt exists, only removed metadata'
+
+        self.dunp_metadata()
+
 
     def load_experiment(self, experiment):
         print 'experiment = ' + str(experiment)

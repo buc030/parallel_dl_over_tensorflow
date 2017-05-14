@@ -37,15 +37,15 @@ class ExperimentResults:
         self.sgd_epoch_weights_norms = []
         self.sgd_epoch_input_norms = []
 
-        self.epochTimes = []
-        self.epochsDone = 0
-        self.errors_b4_merge = []
-        self.errors_after_merge = []
-        self.cg_f_vals = []
-        self.cg_grad_norms = []
-        self.sesop_indeces = []
-        self.h_of_alphas = {}
-        self.alphas = {}
+        # self.epochTimes = []
+        # self.epochsDone = 0
+        # self.errors_b4_merge = []
+        # self.errors_after_merge = []
+        # self.cg_f_vals = []
+        # self.cg_grad_norms = []
+        # self.sesop_indeces = []
+        # self.h_of_alphas = {}
+        # self.alphas = {}
         self.label = label
 
     def buildLabel(self, flag_names_to_use_in_label):

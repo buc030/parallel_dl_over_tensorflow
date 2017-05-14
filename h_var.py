@@ -132,6 +132,7 @@ class HVar:
             return self.o
 
     def assert_alphas_are_zero(self):
+        return []
         if hasattr(self, 'assert_alphas_are_zero_op'):
             return self.assert_alphas_are_zero_op
 
@@ -151,6 +152,7 @@ class HVar:
     def update_history_before_sesop_op(self):
         assert (self.node_id == 0)
 
+        #return [tf.assign(self.history[self.next_idx], self.out() - self.last_snapshot)]
         #put the avrage progress inside the history (we will also have each of the progresses seperatly in the 'replicas' )
         terms = [(self.out() - self.last_snapshot)]
 

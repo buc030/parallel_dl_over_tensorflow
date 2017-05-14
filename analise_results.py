@@ -12,6 +12,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import pyqtSlot
 from PyQt5 import QtCore, QtGui
 
+
 Qt = QtCore.Qt
 
 class PandasModel(QtCore.QAbstractTableModel):
@@ -79,7 +80,11 @@ class App(QWidget):
 
         mgr = experiments_manager.ExperimentsManager()
         for j in range(len(df.columns)):
-            expr_id = self.get_experiment_id_by_widget_item(self.tableWidget.item(0, j))
+            widget = self.tableWidget.item(0, j)
+            if widget is None:
+                print 'No item at column ' + str(j)
+                continue
+            expr_id = self.get_experiment_id_by_widget_item(widget)
             expr = self.get_experiment_by_id(expr_id)
             #expr = mgr.load_experiment(expr)
             if len(expr.results) == 0:
@@ -93,6 +98,7 @@ class App(QWidget):
 
     def refresh(self):
         mgr = experiments_manager.ExperimentsManager()
+        mgr.refresh_metadata()
         df = mgr.print_experiments()
         self.update_from_df(df)
 
@@ -164,6 +170,10 @@ class App(QWidget):
         deleteAction.triggered.connect(lambda: self.delete_experiments(event))
         self.menu.addAction(deleteAction)
 
+        refreshAction = PyQt5.QtWidgets.QAction('Refresh', self)
+        refreshAction.triggered.connect(lambda: self.refresh())
+        self.menu.addAction(refreshAction)
+
         # add other required actions
         self.menu.popup(QtGui.QCursor.pos())
 
@@ -179,7 +189,12 @@ class App(QWidget):
         loaded_experiments = {}
         i = 0
         for e in experiments.values():
-            loaded_experiments[i] = experiments_manager.ExperimentsManager.get().load_experiment(e)
+            try:
+                loaded_experiments[i] = experiments_manager.ExperimentsManager.get().load_experiment(e)
+            except Exception,e:
+                print 'Failed loading, try again...'
+                print str(e)
+                return
             if not loaded_experiments[i].has_data():
                 print '###############################################'
                 print 'No data for expr ' + str(loaded_experiments[i])

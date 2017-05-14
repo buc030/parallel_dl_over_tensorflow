@@ -23,10 +23,10 @@ def fc_layer(input, n_in, n_out, activation=True):
 
 
 def build_model(x, dim, out_dim, layers_num=4):
-    layers = [fc_layer(x, dim, 8*dim)]
+    layers = [fc_layer(x, dim, 2*dim)]
     for i in range(layers_num):
-        layers.append(fc_layer(layers[-1], 8*dim, 8*dim))
-    layers.append(fc_layer(layers[-1], 8*dim, out_dim, False))
+        layers.append(fc_layer(layers[-1], 2*dim, 2*dim))
+    layers.append(fc_layer(layers[-1], 2*dim, out_dim, False))
     model_out = layers[-1]
 
     return model_out
@@ -55,7 +55,7 @@ def generate_random_data(input_dim, output_dim, n):
     with tf.name_scope('generating_data'):
         x = tf.placeholder(tf.float32, shape=[None, input_dim], name='x')
         data_model_out = build_model(x, input_dim, input_dim, 1) #the data model is not deep, to have pretty scattered data
-        label_model_out = build_model(x, input_dim, output_dim)
+        label_model_out = build_model(x, input_dim, output_dim, 1)
 
         #with tf.Session('grpc://' + tf_server, config=config) as sess:
         config = tf.ConfigProto()

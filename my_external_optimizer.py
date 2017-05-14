@@ -102,7 +102,7 @@ class ExternalOptimizerInterface(object):
                                                 accumulated_dims[1:])]
 
   def minimize(self, session=None, feed_dicts=None, fetches=None,
-               step_callback=None, loss_callback=None, override_loss_grad_func=None, additional_feed_dict=None):
+               step_callback=None, loss_callback=None, override_loss_grad_func=None, additional_feed_dict={}):
     """Minimize a scalar `Tensor`.
 
     Variables subject to optimization are updated in-place at the end of
@@ -154,7 +154,6 @@ class ExternalOptimizerInterface(object):
     # Get initial value from TF session.
     initial_packed_var_val = session.run(self._packed_var)
 
-    print ('2 self.optimizer_kwargs = ' + str(self.optimizer_kwargs))
     # Perform minimization.
     packed_var_val = self._minimize(
         initial_val=initial_packed_var_val, loss_grad_func=loss_grad_func,

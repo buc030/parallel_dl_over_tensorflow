@@ -16,12 +16,16 @@ class SimpleBatchProvider:
                                           self.testing_data, self.testing_labels, batch_size)
 
         self._batch = self.custom_runner.get_inputs()
+
+
     def set_data_source(self, sess, data_name='train'):
         if data_name == 'test':
             self.custom_runner.set_data_source(sess, 0)
-        else:
-            assert (data_name == 'train')
+        elif data_name == 'train':
             self.custom_runner.set_data_source(sess, 1)
+        else:
+            assert (data_name == 'sesop')
+            self.custom_runner.set_data_source(sess, 2)
 
     def batch(self):
         return self._batch

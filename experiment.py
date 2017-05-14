@@ -28,8 +28,9 @@ class Experiment:
         'fixed_bn_during_sesop': False,
         'sesop_batch_mult' : 1,
         'subspace_optimizer' : 'BFGS',
-        'DISABLE_VECTOR_BREAKING' : debug_utils.DISABLE_VECTOR_BREAKING,
-        'NORMALIZE_DIRECTIONS' : debug_utils.NORMALIZE_DIRECTIONS
+        'DISABLE_VECTOR_BREAKING' : True,
+        'NORMALIZE_DIRECTIONS' : False,
+        'learning_rate_per_node': False
     }
 
     FLAGS_ALIASES = {'batch_size' : 'b'}
@@ -142,6 +143,7 @@ class Experiment:
 
                     assert(model is not None)
 
+                    model.gpu = gpu % 4
                     self.models.append(model)
                     #scope.reuse_variables()
 

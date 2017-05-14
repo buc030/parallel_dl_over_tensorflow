@@ -7,6 +7,7 @@ from batch_provider import SimpleBatchProvider, CifarBatchProvider
 import numpy as np
 import tqdm
 import os
+from ParallelBlockCoordiantesOptimizer import  ParallelBlockCoordiantesOptimizer
 
 import shutil
 class ExperimentRunner:
@@ -60,6 +61,8 @@ class ExperimentRunner:
         for e in self.experiments:
             experiments_manager.ExperimentsManager.get().dump_experiment(e)
 
+        experiments_manager.ExperimentsManager.get().dunp_metadata()
+
     #return a list of the models, losses, accuracies, after the done experiments were removed
     def remove_finished_experiments(self):
         models, losses, accuracies = [], [], []
@@ -86,31 +89,31 @@ class ExperimentRunner:
         self.assert_all_experiments_has_same_flag(flagname)
         return res
 
-    def init_batch_providers(self, sess):
-        self.batch_providers = []
-
-        model = self.getSharedFlagValue('model')
-        max_nodes = max([e.getFlagValue('nodes') for e in self.experiments])
+    def init_batch_providers(self):
+        self.batch_providers = {}
 
         #Every node needs to have a different batch provider to make sure they see diff data
-        for i in range(max_nodes):
-            with tf.device('/cpu:*'):
-                if model == 'simple':
-                    with tf.name_scope('simple_batch_provider_' + str(i)) as scope:
-                        self.batch_providers.append(
-                            SimpleBatchProvider(input_dim=self.input_dim, output_dim=self.output_dim, \
-                                                dataset_size=self.train_dataset_size, \
-                                                batch_size=self.batch_size))
+        for e in self.experiments:
+            self.batch_providers[e] = []
+            model = e.getFlagValue('model')
+            for i in range(e.getFlagValue('nodes')):
+                with tf.device('/cpu:*'):
+                    if model == 'simple':
+                        with tf.name_scope('simple_batch_provider_' + str(i)) as scope:
 
-                elif model == 'mnist':
-                    assert (False)
-                elif model == 'cifar10':
-                    with tf.variable_scope('cifar10_batch_provider_' + str(i)) as scope:
-                        self.batch_providers.append(
-                            CifarBatchProvider(batch_sizes=[self.batch_size], \
-                                               train_threads=4*len(self.experiments)))
+                            self.batch_providers[e].append(
+                                SimpleBatchProvider(input_dim=self.input_dim, output_dim=self.output_dim, \
+                                                    dataset_size=self.train_dataset_size, \
+                                                    batch_size=self.batch_size))
 
-        return self.batch_providers
+                    elif model == 'mnist':
+                        assert (False)
+                    elif model == 'cifar10':
+                        with tf.variable_scope('cifar10_batch_provider_' + str(i)) as scope:
+                            self.batch_providers[e].append(
+                                CifarBatchProvider(batch_sizes=[self.batch_size], \
+                                                   train_threads=4*len(self.experiments)))
+
 
     def add_experiemnts_results(self, train_error, test_error):
         i = 0
@@ -152,17 +155,19 @@ class ExperimentRunner:
             gpu = 0
             expr_num = 0
 
-            self.init_batch_providers(sess)
-
+            self.init_batch_providers()
             for e in tqdm.tqdm(self.experiments):
                 with tf.variable_scope('pid_' + str(pid) + '_experiment_' + str(expr_num)):
-                    gpu += e.init_models(gpu, self.batch_providers)
+                    gpu += e.init_models(gpu, self.batch_providers[e])
                 expr_num += 1
 
 
             print 'Setting up optimizers'
             with tf.name_scope('seboost'):
-                optimizer = SeboostOptimizer(self.experiments)
+                if self.experiments[0].getFlagValue('optimizer') == 'pbco':
+                    optimizer = ParallelBlockCoordiantesOptimizer(self.experiments[0])
+                else:
+                    optimizer = SeboostOptimizer(self.experiments)
             # with tf.name_scope('stochastic_cg'):
             #     optimizer = StochasticCGOptimizer(self.experiments[0].models[0].loss(), self.experiments[0].models[0].hvar_mgr.all_trainable_weights(), \
             #                                       self.experiments[0].models[0].get_extra_train_ops(), 10)
@@ -201,8 +206,14 @@ class ExperimentRunner:
             coord = tf.train.Coordinator()
             threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
-            for batch_provider in self.batch_providers:
-                batch_provider.custom_runner.start_threads(sess, n_train_threads=1, n_test_threads=1)
+            for e in self.experiments:
+                for batch_provider in self.batch_providers[e]:
+                    batch_provider.custom_runner.start_threads(sess, n_train_threads=4, n_test_threads=1)
+
+            if self.experiments[0].getFlagValue('optimizer') == 'pbco':
+                optimizer.start_threads(sess, 1)
+            else:
+                optimizer.start_threads(sess)
 
             print 'pulling initial weights from master'
             for e in self.experiments:
@@ -210,6 +221,7 @@ class ExperimentRunner:
                     sess.run(worker.pull_from_master_op())
 
             models, _, accuracies = self.remove_finished_experiments()
+            all_models = list(models)
 
             for epoch in range(self.epochs):
 
@@ -228,49 +240,55 @@ class ExperimentRunner:
 
                 for m in models:
                     m.batch_provider.set_data_source(sess, 'train')
-                for i in tqdm.tqdm(range((self.train_dataset_size/1) / self.batch_size)):
+                    m.batch_provider.custom_runner.set_deque_batch_size(sess, 50000)
+                for i in tqdm.tqdm(range((self.train_dataset_size/1) / 50000)):
                     train_error +=  np.array(sess.run(accuracies))
-                train_error /= float((self.train_dataset_size/1) / self.batch_size)
+                train_error /= float((self.train_dataset_size/1) / 50000)
                 print 'Train Accuracy = ' + str(train_error)
 
+                ############ TEST #############
                 for m in models:
                     m.batch_provider.set_data_source(sess, 'test')
-                for i in tqdm.tqdm(range(self.test_dataset_size / self.batch_size)):
-
-                    #steps = {'accuracies' : accuracies, 'stages' : stages, 'merged' : merged}
+                    m.batch_provider.custom_runner.set_deque_batch_size(sess, 50000)
+                for i in tqdm.tqdm(range(self.test_dataset_size / 50000)):
                     steps = {'accuracies': accuracies}
                     steps = sess.run(steps)
-
-
                     test_error += np.array(steps['accuracies'])
-                test_error /= float(self.test_dataset_size / self.batch_size)
+                test_error /= float(self.test_dataset_size / 50000)
                 print 'Test Accuracy = ' + str(test_error)
 
-                print 'Dumping results....'
                 self.add_experiemnts_results(train_error, test_error)
-                if epoch % 10 == 0:
+                if epoch % 5 == 0:
+                    print 'Dumping results....'
                     self.dump_results()
+                    print 'Done Dumping results.'
+
                 # for m in tqdm.tqdm(models):
                 #     m.dump_checkpoint(sess)
 
                 print 'Start training Epoch #' + str([e.get_number_of_ran_epochs() for e in self.experiments])
                 print 'Training'
 
-                # for m in models:
-                #     m.batch_provider.set_source(sess, self.batch_size, 1)
-                # for i in tqdm.tqdm(range(self.train_dataset_size/ self.batch_size)):
-                #     optimizer.run_iter(sess)
-                #     for e in self.experiments:
-                #         for model_idx in range(len(e.models)):
-                #             e.add_iteration_train_error(model_idx, optimizer.losses[-1])
 
                 for m in models:
                     m.batch_provider.set_data_source(sess, 'train')
-                optimizer.run_epoch(sess=sess)
+                    m.batch_provider.custom_runner.set_deque_batch_size(sess, self.batch_size)
+
+                if self.experiments[0].getFlagValue('optimizer') != 'pbco':
+                    optimizer.run_epoch(sess=sess)
 
                 #dump eperiments before continue to next round!
 
                 # writer.flush()
+            train_error, test_error = np.zeros(len(models)), np.zeros(len(models))
+            for m in all_models:
+                m.batch_provider.set_data_source(sess, 'test')
+                for i in tqdm.tqdm(range(self.test_dataset_size / self.batch_size)):
+                    steps = {'accuracies': accuracies}
+                    steps = sess.run(steps)
+                    test_error += np.array(steps['accuracies'])
+            test_error /= float(self.test_dataset_size / self.batch_size)
+            print 'Test Accuracy = ' + str(test_error)
 
             print '########### request_stop ###########'
             coord.request_stop()
@@ -461,8 +479,30 @@ def find_simple_baseline():
     return experiments
 
 
+def simple_pbco(n, h, sesop_batch_mult, lr, hidden_layers_sizes, DISABLE_VECTOR_BREAKING, NORMALIZE_DIRECTIONS):
+    experiments = {}
+    experiments[len(experiments)] = experiment.Experiment(
+        {
+            'model': 'simple',
+            'b': 50000,
+            'lr': lr,
+            'sesop_batch_size': 0,
+            'sesop_batch_mult': sesop_batch_mult,
+            'sesop_freq': 1.0 / 200.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            'hSize': h,
+            'nodes': n,
+            'dataset_size': 50000,
+            'hidden_layers_sizes': hidden_layers_sizes,
+            'epochs': 1000,
+            'DISABLE_VECTOR_BREAKING' : DISABLE_VECTOR_BREAKING,
+            'NORMALIZE_DIRECTIONS' : NORMALIZE_DIRECTIONS,
+            'optimizer': 'pbco'
+    })
 
-def simple_multinode(n, h, sesop_batch_mult, lr, hidden_layers_sizes):
+    return experiments
+
+
+def simple_multinode(n, h, sesop_batch_mult, lr, hidden_layers_sizes, DISABLE_VECTOR_BREAKING, NORMALIZE_DIRECTIONS):
     experiments = {}
     experiments[len(experiments)] = experiment.Experiment(
         {
@@ -474,11 +514,13 @@ def simple_multinode(n, h, sesop_batch_mult, lr, hidden_layers_sizes):
             'sesop_freq': 1.0 / 200.0,  # (1.0 / 391.0),  # sesop every 1 epochs (no sesop)
             'hSize': h,
             'nodes': n,
-            'dataset_size': 20000,
+            'dataset_size': 50000,
             'hidden_layers_sizes': hidden_layers_sizes,
             'epochs': 100,
-            'DISABLE_VECTOR_BREAKING' : True,
-            'NORMALIZE_DIRECTIONS' : False
+            'DISABLE_VECTOR_BREAKING' : DISABLE_VECTOR_BREAKING,
+            'NORMALIZE_DIRECTIONS' : NORMALIZE_DIRECTIONS,
+            'optimizer': 'sesop',
+            'learning_rate_per_node' : False
     })
 
     return experiments

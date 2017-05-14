@@ -5,7 +5,7 @@ import argparse
 import numpy as np
 import experiment
 import experiments_manager
-from experiment_runner import ExperimentRunner, simple_multinode
+from experiment_runner import ExperimentRunner, simple_multinode, simple_pbco
 
 
 def str2bool(v):
@@ -26,20 +26,60 @@ parser.add_argument('-sesop_batch_mult', type=int, nargs=1, required=True, help=
 parser.add_argument('-NORMALIZE_DIRECTIONS', type=str2bool, nargs=1, required=True, help='')
 parser.add_argument('-DISABLE_VECTOR_BREAKING', type=str2bool, nargs=1, required=True, help='')
 
-# args = parser.parse_args()
+args = parser.parse_args()
 
 
 experiments = {}
 
+#baseline
+# experiments[len(experiments)] = simple_multinode(n=1, h=0, sesop_batch_mult=12,
+#                                                  lr=0.044, hidden_layers_sizes=[6, 60, 30, 10, 1],
+#                                                  DISABLE_VECTOR_BREAKING=True, NORMALIZE_DIRECTIONS=False)[0]
+
+# # # Vanila
+experiments[len(experiments)] = simple_multinode(n=4, h=1, sesop_batch_mult=12,
+                                                 lr=0.044, hidden_layers_sizes=[6, 60, 30, 10, 1],
+                                                 DISABLE_VECTOR_BREAKING=False, NORMALIZE_DIRECTIONS=True)[0]
+# #
+# # # With VB
+experiments[len(experiments)] = simple_multinode(n=4, h=2, sesop_batch_mult=12,
+                                                 lr=0.044, hidden_layers_sizes=[6, 60, 30, 10, 1],
+                                                 DISABLE_VECTOR_BREAKING=False, NORMALIZE_DIRECTIONS=True)[0]
+# #
+# # # With Normaliziation
+experiments[len(experiments)] = simple_multinode(n=4, h=4, sesop_batch_mult=12,
+                                                 lr=0.044, hidden_layers_sizes=[6, 60, 30, 10, 1],
+                                                 DISABLE_VECTOR_BREAKING=False, NORMALIZE_DIRECTIONS=True)[0]
+
+# #
+# # With both
+experiments[len(experiments)] = simple_multinode(n=4, h=8, sesop_batch_mult=12,
+                                                 lr=0.044, hidden_layers_sizes=[6, 60, 30, 10, 1],
+                                                 DISABLE_VECTOR_BREAKING=False, NORMALIZE_DIRECTIONS=True)[0]
+
+experiments[len(experiments)] = simple_multinode(n=4, h=16, sesop_batch_mult=12,
+                                                 lr=0.044, hidden_layers_sizes=[6, 60, 30, 10, 1],
+                                                 DISABLE_VECTOR_BREAKING=False, NORMALIZE_DIRECTIONS=True)[0]
+
+# experiments = simple_pbco(n=args.n[0], h=args.history[0], sesop_batch_mult=args.sesop_batch_mult[0], lr=args.lr[0],
+#                                hidden_layers_sizes=[6, 60, 30, 10, 1],
+#                                DISABLE_VECTOR_BREAKING=args.DISABLE_VECTOR_BREAKING,
+#                                NORMALIZE_DIRECTIONS=args.NORMALIZE_DIRECTIONS)
 
 
+#
+# experiments = simple_multinode(n=args.n[0], h=args.history[0], sesop_batch_mult=args.sesop_batch_mult[0], lr=args.lr[0],
+#                                hidden_layers_sizes=[6, 60, 30, 10, 1],
+#                                DISABLE_VECTOR_BREAKING=args.DISABLE_VECTOR_BREAKING[0],
+#                                NORMALIZE_DIRECTIONS=args.NORMALIZE_DIRECTIONS[0])
 
-
-
-for h in [1, 2, 4, 8, 16, 32, 64]:
-    experiments[len(experiments)] = simple_multinode(n=1, h=h, sesop_batch_mult=10, lr=0.7425, hidden_layers_sizes=[6, 60, 30, 10, 1])[0]
-
-
+#winner is 0.044174
+# experiments = {}
+# lrs = np.linspace(0.04, 0.052, 24)
+# for lr in lrs:
+#     experiments[len(experiments)] = simple_multinode(n=1, h=0, sesop_batch_mult=12,
+#                                                   lr=lr, hidden_layers_sizes=[6, 60, 30, 10, 1],
+#                                                   DISABLE_VECTOR_BREAKING=True, NORMALIZE_DIRECTIONS=False)[0]
 runner = ExperimentRunner(experiments, force_rerun=True)
 runner.run()
 
