@@ -441,7 +441,7 @@ class CifarModel(Model):
                       use_bottleneck=False,
                       weight_decay_rate=0.0002,
                       relu_leakiness=0.1,
-                      optimizer=self.experiment.getFlagValue('optimizer'))
+                      optimizer=self.experiment.getFlagValue('base_optimizer'))
 
         #self.input = tf.reshape(self.input, [-1, 3, 32, 32])
         with tf.variable_scope('model_' + str(self.node_id)):
@@ -450,6 +450,11 @@ class CifarModel(Model):
 
             #self.model._extra_train_ops.append(self.stage)
             self.model._build_train_op()
+
+
+        self.grad_norm = tf.global_norm(self.model.grads)
+        self.weights_norm = self.model.weights_norm
+        self.input_norm = tf.global_norm([self.input, self.label])
 
         self._loss = self.model.cost
         self.model._accuracy = self.model.accuracy #tf.group(*[self.model.accuracy, self.stage])

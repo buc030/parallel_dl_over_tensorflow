@@ -156,7 +156,9 @@ class ResNet(object):
     tf.summary.scalar('learning_rate', self.lrn_rate)
 
     trainable_variables = self.hvar_mgr.all_trainable_weights()
-    grads = tf.gradients(self.cost, trainable_variables)
+    self.weights_norm = tf.global_norm(trainable_variables)
+
+    self.grads = tf.gradients(self.cost, trainable_variables)
 
     if self.hps.optimizer == 'sgd':
       optimizer = tf.train.GradientDescentOptimizer(self.lrn_rate)
@@ -167,7 +169,7 @@ class ResNet(object):
       assert (False)
 
     apply_op = optimizer.apply_gradients(
-        zip(grads, trainable_variables),
+        zip(self.grads, trainable_variables),
         global_step=self.global_step, name='train_step')
 
     train_ops = [apply_op] + self._extra_train_ops

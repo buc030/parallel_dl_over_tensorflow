@@ -96,29 +96,33 @@ class SeboostOptimizer:
         for i in tqdm.tqdm(range(self.train_dataset_size/self.batch_size)):
             self.run_iter(sess)
 
-
+        #sesop once an epoch!
         res = self.run_sesop()
         print 'Actual sesop freq is: ' + str(float(self.sesop_runs + 1) / (self.curr_iter + 1))
 
     def run_simple_iter(self, sess):
         #print '############### RUNNING SIMPLE ITER ################'
-        _, losses, grad_norms, weights_norms, input_norms = sess.run([self.train_steps, self.losses, self.grad_norms, self.weights_norms, self.input_norms])
+        if debug_utils.DEBUG_SGD == True:
+            _, losses, grad_norms, weights_norms, input_norms = sess.run([self.train_steps, self.losses, self.grad_norms, self.weights_norms, self.input_norms])
+        else:
+            _, losses = sess.run([self.train_steps, self.losses])
 
         i = 0
         for e in self.experiments:
             for model_idx in range(len(e.models)):
                 e.add_iteration_train_error(model_idx, losses[i])
-                e.add_sgd_iter_grad_norm(model_idx, grad_norms[i])
-                e.add_sgd_iter_weight_norm(model_idx, weights_norms[i])
-                e.add_sgd_iter_input_norm(model_idx, input_norms[i])
+                if debug_utils.DEBUG_SGD == True:
+                    e.add_sgd_iter_grad_norm(model_idx, grad_norms[i])
+                    e.add_sgd_iter_weight_norm(model_idx, weights_norms[i])
+                    e.add_sgd_iter_input_norm(model_idx, input_norms[i])
                 i += 1
 
         self.curr_iter += 1
         return None  # TODO: need to return loss per experiment here
 
     def run_iter(self, sess):
-        if self.curr_iter % self.params.values()[0].sgd_steps != 0:
-            return self.run_simple_iter(sess)
+        #if True or self.curr_iter % self.params.values()[0].sgd_steps != 0:
+        return self.run_simple_iter(sess)
 
         for e in self.experiments:
             for model_idx in range(len(e.models)):
