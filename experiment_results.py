@@ -58,10 +58,10 @@ class ExperimentResults:
         if len(self.trainError) == 0:
             print 'No data!'
             assert(False)
-        return min([l for l in self.trainError if l > 0])
+        return min([1 - l for l in self.trainError if l > 0])
 
     def getBestTestError(self):
-        return min([l for l in self.testError if l > 0])
+        return min([1 - l for l in self.testError if l > 0])
 
     def plotTrainErrorPerIteration(self, flag_names_to_use_in_label=None):
         plt.title('Train Error')
@@ -192,9 +192,9 @@ class ExperimentResults:
         plt.title('loss before and after sesop. Green: before, Red: after')
         xs = []
         for x1, x2 in zip(self.debug_sesop_on_sesop_batch_after, self.debug_sesop_on_sesop_batch_before):
-            xs.append(x2)
+            xs.append(x2[0])
             plt.axvline(x=len(xs) - 1, ls='-', color='g')
-            xs.append(x1)
+            xs.append(x1[0])
             plt.axvline(x=len(xs) - 1, ls='-', color='r')
 
         plt.plot(xs, label='batch')

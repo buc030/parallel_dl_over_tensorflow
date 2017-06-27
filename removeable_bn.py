@@ -42,7 +42,7 @@ class RemoveableBNLayer:
             return (ema.average(self.bn_batch_mean), ema.average(self.bn_batch_variance))
 
         #dont update moving mean while switching BN/NON-BN
-        self.is_not_updating = tf.Variable(True)
+        self.is_not_updating = tf.Variable(True, trainable=False)
         self.set_is_not_updating = [tf.assign(self.is_not_updating, False), tf.assign(self.is_not_updating, True)]
         #SV NOTE: for now we only support switching using moving mean.
         self.mean, self.var = tf.cond(tf.logical_and(tf.logical_and(phase_train, self.is_bn_on), self.is_not_updating),
@@ -159,9 +159,9 @@ class Convolution2D(object):
         wshape = [patch_siz[0], patch_siz[1], in_ch, out_ch]
 
         w_cv = tf.Variable(tf.truncated_normal(wshape, stddev=0.1),
-                            trainable=True)
+                            trainable=True, name='W')
         b_cv = tf.Variable(tf.constant(0.1, shape=[out_ch]),
-                            trainable=True)
+                            trainable=True, name='b')
 
         self.w = w_cv
         self.b = b_cv
@@ -237,7 +237,7 @@ class MnistModel:
 
     def __init__(self):
         self.nb_layers = []
-        self.is_bn_on = tf.Variable(True)
+        self.is_bn_on = tf.Variable(True, trainable=False)
         self.set_is_bn_on = [tf.assign(self.is_bn_on, False), tf.assign(self.is_bn_on, True)]
 
         self.mnist = input_data.read_data_sets("./MNIST_data/", one_hot=True)
@@ -278,10 +278,11 @@ class MnistModel:
 
     def inference(self, x, y_, keep_prob, phase_train):
         x_image = tf.reshape(x, [-1, 28, 28, 1])
-
+        self.layers = []
         with tf.variable_scope('conv_1'):
             #input, input_siz, in_ch, out_ch, patch_siz, activation
             conv1 = Convolution2D(x, (28, 28), 1, 32, (5, 5), activation='none')
+            self.layers.append(conv1)
             #conv1_bn = self.batch_norm(conv1.output(), 32, phase_train)
             conv1_bn = self.batch_norm(conv1.output(), conv1.w, conv1.b, phase_train)
             conv1_out = tf.nn.relu(conv1_bn)
@@ -293,6 +294,7 @@ class MnistModel:
         with tf.variable_scope('conv_2'):
             conv2 = Convolution2D(pool1_out, (28, 28), 32, 64, (5, 5),
                                   activation='none')
+            self.layers.append(conv2)
             conv2_bn = self.batch_norm(conv2.output(), conv2.w, conv2.b, phase_train)
             conv2_out = tf.nn.relu(conv2_bn)
             pool2 = MaxPooling2D(conv2_out)
@@ -301,13 +303,15 @@ class MnistModel:
 
         with tf.variable_scope('fc1'):
             fc1 = FullConnected(pool2_flat, 7 * 7 * 64, 1024)
-
+            self.layers.append(fc1)
             fc1_out = fc1.output()
             fc1_dropped = fc1_out
             #fc1_dropped = tf.nn.dropout(fc1_out, keep_prob)
 
         #just FC with softmax
-        y_pred = ReadOutLayer(fc1_dropped, 1024, 10).output()
+        with tf.variable_scope('fc2'):
+            y_pred = ReadOutLayer(fc1_dropped, 1024, 10).output()
+            self.layers.append(y_pred)
 
         cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_pred),
                                                       reduction_indices=[1]))
@@ -369,7 +373,7 @@ class MnistModel:
         chkpt_file = 'checkpoints/mnist_cnn.ckpt'
 
         # Train
-        self.lr = tf.Variable(0.001, name='learning_rate')
+        self.lr = tf.Variable(0.001, name='learning_rate', trainable=False)
         self.mul_lr = tf.assign(self.lr, self.lr * 100)
         self.div_lr = tf.assign(self.lr, self.lr / 100)
 
@@ -392,6 +396,20 @@ class MnistModel:
 
 
         vars_to_train = tf.trainable_variables()    # option-1
+
+        ############### BN LR experiment ################
+        _grad = tf.gradients(loss, vars_to_train)
+        grad_norms = [tf.norm(g) for g in _grad]
+
+        global_grad_norm = tf.global_norm(_grad)
+        snapshot = [tf.Variable(v.initialized_value(), trainable=False) for v in vars_to_train]
+        #distances = [tf.squared_difference(v1, v2) for v1,v2 in zip(snapshot, vars_to_train)]
+        self.take_snapshot = [tf.assign(v1, v2) for v1,v2 in zip(snapshot, vars_to_train)]
+        [tf.summary.scalar('BN_effective_lr_' + str(v2.name), tf.norm(v1 - v2)/grad_norm , ['BN_effective_lr_summary']) for v1,v2, grad_norm in zip(snapshot, vars_to_train, grad_norms)]
+        tf.summary.scalar('BN_effective_lr_global', tf.global_norm([v1 - v2 for v1,v2 in zip(snapshot, vars_to_train)])/global_grad_norm, ['BN_effective_lr_summary'])
+        #################################################
+
+
         vars_for_bn1 = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, # TF >1.0
                                          scope='conv_1/bn')
         vars_for_bn2 = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, # TF >1.0
@@ -427,6 +445,8 @@ class MnistModel:
 
             full_train_merged = tf.summary.merge_all('full_train_summaries')
             merged = tf.summary.merge_all()
+            BN_effective_lr_summary = tf.summary.merge_all('BN_effective_lr_summary')
+
             train_writer = tf.summary.FileWriter('./tensorboard', sess.graph)
 
             if TASK == 'train':
@@ -440,8 +460,32 @@ class MnistModel:
                         batch_xs, batch_ys = self.mnist.train.next_batch(batch_size)
                         #SV NOTE: dont update mocing mean when running without bn
                         #is_bn_on = epoch % 2 == 0
-                        train_step.run({x: batch_xs, y_: batch_ys, keep_prob: 0.5,
+                        if i % 10 == 0:
+                            print ('i = ' + str(i))
+                        #Now add BN, and make a step
+                        if epoch > 0 or i > 0:
+                            _grad_norms = sess.run(grad_norms, {x: batch_xs, y_: batch_ys, phase_train: False})
+                            _global_grad_norm = sess.run(global_grad_norm, {x: batch_xs, y_: batch_ys, phase_train: False})
+                            sess.run(self.take_snapshot)
+                            self.push_bns(sess, {x: batch_xs, phase_train: False, keep_prob: 1.0})
+
+                        _ = sess.run(train_step, {x: batch_xs, y_: batch_ys, keep_prob: 0.5,
                               phase_train: True})
+
+                        # train_step.run({x: batch_xs, y_: batch_ys, keep_prob: 0.5,
+                        #       phase_train: True})
+
+                        #Now pop the BN and check how far did we go?
+                        #This way we can learn how BN affect learning rates
+                        if epoch > 0 or i > 0:
+                            fd = {}
+                            fd[global_grad_norm] = _global_grad_norm
+                            fd.update({x: batch_xs, phase_train: False, keep_prob: 1.0})
+                            for gn, _gn in zip(grad_norms, _grad_norms):
+                                fd[gn] = _gn
+                            self.pop_bns(sess, {x: batch_xs, phase_train: False, keep_prob: 1.0})
+                            train_writer.add_summary(sess.run(BN_effective_lr_summary, fd), i + epoch * len(range(55000 / batch_size)))
+
                         if epoch > 0:
                             summary = sess.run(merged, {x: batch_xs, y_: batch_ys, phase_train: False, keep_prob: 1.0})
                             train_writer.add_summary(summary, i + epoch*len(range(55000/batch_size)))
@@ -455,17 +499,17 @@ class MnistModel:
                     summary = sess.run(full_train_merged, {full_train_accuracy: train_accuracy, full_train_loss: train_loss})
                     train_writer.add_summary(summary, epoch)
 
-                    bn_switch_batch_x, bn_switch_batch_y = self.mnist.train.next_batch(batch_size * 10)
-                    if epoch % 2 == 0:
-                        print ('poping bn...')
-                        self.pop_bns(sess, {x: bn_switch_batch_x, phase_train: True, keep_prob: 1.0})
-                        #sess.run(self.div_lr)
-                        #sess.run(merged)
-                    else:
-                        print ('pushing bn...')
-                        self.push_bns(sess, {x: bn_switch_batch_x, phase_train: True, keep_prob: 1.0})
-                        #sess.run(self.mul_lr)
-                        #sess.run(merged)
+                    # bn_switch_batch_x, bn_switch_batch_y = self.mnist.train.next_batch(batch_size * 10)
+                    # if epoch % 2 == 0:
+                    #     print ('poping bn...')
+                    #     #self.pop_bns(sess, {x: bn_switch_batch_x, phase_train: True, keep_prob: 1.0})
+                    #     #sess.run(self.div_lr)
+                    #     #sess.run(merged)
+                    # else:
+                    #     print ('pushing bn...')
+                    #     #self.push_bns(sess, {x: bn_switch_batch_x, phase_train: True, keep_prob: 1.0})
+                    #     #sess.run(self.mul_lr)
+                    #     #sess.run(merged)
 
                     # train_accuracy, train_loss = self.calc_train_loss(x, y_, loss, accuracy, batch_size, phase_train, keep_prob)
                     # print('(after) step, loss, accurary = %6d: %8.4f, %8.4f' % (epoch, train_loss, train_accuracy))

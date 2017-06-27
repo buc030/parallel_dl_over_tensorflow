@@ -281,7 +281,6 @@ class SimpleModel(Model):
 
             self.hvar_mgr.normalize_directions_ops()
 
-
     def get_extra_train_ops(self):
         return []
 

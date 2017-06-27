@@ -180,7 +180,7 @@ class ResNet(object):
   def _batch_norm(self, name, x):
     """Batch normalization."""
     with tf.variable_scope(name):
-      shape = x.get_shape()
+
       params_shape = [x.get_shape()[-1]]
 
       #print 'shape = ' + str(shape)

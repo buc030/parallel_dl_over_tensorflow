@@ -27,7 +27,9 @@ class SeboostOptimizerParams:
                                            method='CG', options={'maxiter': 200 * len(cg_var_list), 'gtol': 1e-6})
         elif opt == 'BFGS':
             return ScipyOptimizerInterface(loss=model.loss()/self.grad_norm_placeholder, var_list=cg_var_list, \
-                                           method='BFGS', options={'maxiter': 200 * len(cg_var_list), 'gtol': 1e-6})
+                                           method='BFGS', options={'maxiter': 50, 'gtol': 1e-6})
+        elif opt == 'natural_gradient':
+            return NaturalGradientOptimizer(model.loss()/self.grad_norm_placeholder, model.model.predictions, cg_var_list)
         assert (False)
 
     def __init__(self, model):
@@ -187,11 +189,7 @@ class SeboostOptimizer:
 
         # Now optimize by alpha
         master_model.batch_provider.set_data_source(sess, 'sesop')
-        master_model.batch_provider.custom_runner.set_deque_batch_size(sess, self.batch_size * e.getFlagValue(
-            'sesop_batch_mult'))
-        feed_dicts = [master_model.get_shared_feed(sess, worker_models) for i in
-                      range(1)]
-        master_model.batch_provider.custom_runner.set_deque_batch_size(sess, self.batch_size)
+        feed_dicts = [master_model.get_shared_feed(sess, worker_models) for i in range(e.getFlagValue('sesop_batch_mult'))]
 
         if debug_utils.DEBUG_LEVEL > 0:
             loss_b4_sesop_on_batch = avarge_on_feed_dicts(sess=sess, additional_feed_dict={},
@@ -256,9 +254,11 @@ class SeboostOptimizer:
         if debug_utils.DEBUG_LEVEL > 0:
             loss_after_sesop = master_model.calc_train_accuracy(sess, batch_size=self.batch_size,
                                                                 train_dataset_size=self.train_dataset_size)
+            loss_after_sesop_on_batch = avarge_on_feed_dicts(sess=sess, additional_feed_dict={},
+                                   target_ops=[master_model.loss()], feed_dicts=feed_dicts)
+
             e.add_debug_sesop(0, loss_b4_sesop, loss_after_sesop)
-            e.add_debug_sesop_on_sesop_batch(0, loss_b4_sesop_on_batch,
-                                             sess.run(master_model.loss(), feed_dict=feed_dicts[0]))
+            e.add_debug_sesop_on_sesop_batch(0, loss_b4_sesop_on_batch, loss_after_sesop_on_batch)
 
         sess.run(after_sesop)  # after this 'snapshot' is updated with the result of the sesop
         sess.run(zero_alpha)

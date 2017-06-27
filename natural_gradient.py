@@ -63,6 +63,6 @@ class NaturalGradientOptimizer:
             hessp=self.fisher_information_matrix, \
             method='trust-ncg', options={'maxiter': 10})
 
-    def minimize(self, sess, feed_dicts, loss_callback=None):
+    def minimize(self, sess, feed_dicts, loss_callback=None, additional_feed_dict={}):
         self.sess = sess
-        self.cg.minimize(self.sess, feed_dicts=feed_dicts)
+        self.cg.minimize(self.sess, feed_dicts=feed_dicts, additional_feed_dict=additional_feed_dict)

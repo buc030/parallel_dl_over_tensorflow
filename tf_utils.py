@@ -109,7 +109,7 @@ class CustomRunner(object):
         self.batch_size = batch_size
 
 
-        self.batch_size_tf_var = tf.Variable(self.batch_size)
+        self.batch_size_tf_var = tf.Variable(self.batch_size, trainable=False)
         self.batch_size_tf_placeholder = tf.placeholder(tf.int32)
         self.set_deque_batch_size_op = tf.assign(self.batch_size_tf_var, self.batch_size_tf_placeholder)
 
