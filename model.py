@@ -47,6 +47,15 @@ class Model(object):
         train_error /= float((train_dataset_size / 1) / batch_size)
         return train_error
 
+    def calc_train_loss(self, sess, batch_size, train_dataset_size):
+        train_error = np.zeros(1)
+        self.batch_provider.set_data_source(sess, 'train')
+
+        for i in range((train_dataset_size / 1) / batch_size):
+            train_error += np.array(sess.run(self.loss()))
+        train_error /= float((train_dataset_size / 1) / batch_size)
+        return train_error
+
     def dump_debug(self, sess, suffix):
         with open('debug_' + suffix, 'w') as f:
 
@@ -409,7 +418,7 @@ class CifarModel(Model):
             var = tf.get_variable(name, shape, dtype, initializer, regularizer, trainable, collections, caching_device,
                             partitioner, validate_shape, custom_getter)
             h_var = self.hvar_mgr.create_var(var)
-            return h_var.out()
+            return h_var
 
         def get_h_variable(name,
                          shape=None,
@@ -438,7 +447,7 @@ class CifarModel(Model):
                       lrn_rate=self.experiment.getFlagValue('lr'),
                       num_residual_units=self.experiment.getFlagValue('num_residual_units'),
                       use_bottleneck=False,
-                      weight_decay_rate=0.0002,
+                      weight_decay_rate= self.experiment.getFlagValue('weight_decay_rate'),
                       relu_leakiness=0.1,
                       optimizer=self.experiment.getFlagValue('base_optimizer'))
 

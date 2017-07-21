@@ -161,7 +161,7 @@ class App(QWidget):
     def contextMenuEvent(self, event):
         self.menu = QMenu(self)
 
-        for plot_type in ['train', 'test', 'debug', 'train_and_test']:
+        for plot_type in ['train', 'test', 'debug', 'debug_sgd', 'train_and_test']:
             showAction = PyQt5.QtWidgets.QAction('Show ' + plot_type, self)
             showAction.triggered.connect(lambda e, plot_type=plot_type: self.display_selected_results(plot_type))
             self.menu.addAction(showAction)

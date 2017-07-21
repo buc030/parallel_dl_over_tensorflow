@@ -108,7 +108,7 @@ class ExperimentRunner:
                     elif model == 'cifar10':
                         with tf.variable_scope('cifar10_batch_provider_' + str(i)) as scope:
                             self.batch_providers[e].append(
-                                CifarBatchProvider(batch_sizes=[self.batch_size]))
+                                CifarBatchProvider(initial_batch_size=self.batch_size))
 
 
     def add_experiemnts_results(self, train_error, test_error):
@@ -205,7 +205,7 @@ class ExperimentRunner:
             for e in self.experiments:
                 if e.getFlagValue('model') == 'simple':
                     for batch_provider in self.batch_providers[e]:
-                        batch_provider.custom_runner.start_threads(sess, n_train_threads=4, n_test_threads=1)
+                        batch_provider.custom_runner.start_threads(sess, n_train_threads=8, n_test_threads=2)
 
             if self.experiments[0].getFlagValue('optimizer') == 'pbco':
                 optimizer.start_threads(sess, 1)
@@ -255,7 +255,7 @@ class ExperimentRunner:
                 print 'Test Accuracy = ' + str(test_error)
 
                 self.add_experiemnts_results(train_error, test_error)
-                if epoch % 5 == 0:
+                if epoch % 1 == 0:
                     print 'Dumping results....'
                     self.dump_results()
                     print 'Done Dumping results.'
@@ -546,7 +546,7 @@ def gans_multinode(n, h):
     return experiments
 
 
-def cifar_multinode(n, h):
+def cifar_multinode(n, h, fixed_bn_during_sesop, DISABLE_VECTOR_BREAKING, NORMALIZE_DIRECTIONS, sesop_freq, weight_decay_rate):
     experiments = {}
     #for lr in [0.4, 0.3, 0.2, 0.1, 0.05, 0.025, 0.025/2]:
     #for lr in [0.2, 0.1, 0.05, 0.025]:
@@ -563,17 +563,25 @@ def cifar_multinode(n, h):
                 'b': 128,
                 'lr': lr,
                 'sesop_batch_size' : 0,
-                'sesop_batch_mult': 1,
-                'sesop_freq': 1.0/390.0, #(1.0 / 391.0),  # sesop every 1 epochs (no sesop)
+            # SV DEBUG
+                'sesop_batch_mult': 10,
+                'sesop_freq': sesop_freq, #(1.0 / 391.0),  # sesop every 1 epochs (no sesop)
                 'hSize': h,
                 'epochs': 100,
                 # saw 5000*100 samples. But if there is a bug, then it is doing only 100 images per epoch
                 'nodes': n,
+            #SV DEBUG
                 'num_residual_units': 4,
                 'optimizer' : 'sesop',
-                'DISABLE_VECTOR_BREAKING': False,
-                'NORMALIZE_DIRECTIONS': True,
-                'learning_rate_per_node': False
+                'DISABLE_VECTOR_BREAKING': DISABLE_VECTOR_BREAKING,
+                'NORMALIZE_DIRECTIONS': NORMALIZE_DIRECTIONS,
+                'learning_rate_per_node': False,
+            # SV DEBUG
+                #'subspace_optimizer' : 'trust-ncg',
+                'subspace_optimizer' : 'BFGS',
+                #'subspace_optimizer' : 'natural_gradient',
+                'fixed_bn_during_sesop' : fixed_bn_during_sesop,
+                'weight_decay_rate' : weight_decay_rate
 
         })
     return experiments

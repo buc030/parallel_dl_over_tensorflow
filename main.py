@@ -1,11 +1,11 @@
 
 
 import debug_utils
-import argparse
 import numpy as np
 import experiment
 import experiments_manager
 from experiment_runner import ExperimentRunner, simple_multinode, simple_pbco, gans_multinode, cifar_multinode
+import argparse
 
 
 def str2bool(v):
@@ -26,7 +26,7 @@ parser.add_argument('-sesop_batch_mult', type=int, nargs=1, required=True, help=
 parser.add_argument('-NORMALIZE_DIRECTIONS', type=str2bool, nargs=1, required=True, help='')
 parser.add_argument('-DISABLE_VECTOR_BREAKING', type=str2bool, nargs=1, required=True, help='')
 
-args = parser.parse_args()
+# args = parser.parse_args()
 
 
 experiments = {}
@@ -71,10 +71,34 @@ experiments = {}
 
 # experiments = gans_multinode(n=1, h=1)
 experiments = {}
-experiments[len(experiments)] = cifar_multinode(n=1, h=0)[0]
-experiments[len(experiments)] = cifar_multinode(n=1, h=1)[0]
-experiments[len(experiments)] = cifar_multinode(n=1, h=2)[0]
-experiments[len(experiments)] = cifar_multinode(n=1, h=4)[0]
+# experiments[len(experiments)] = cifar_multinode(n=1, h=0)[0]
+# experiments[len(experiments)] = cifar_multinode(n=1, h=1)[0]
+#experiments[len(experiments)] = cifar_multinode(n=2, h=2)[0]
+
+experiments[len(experiments)] = cifar_multinode(n=1, h=0, fixed_bn_during_sesop=True, DISABLE_VECTOR_BREAKING=False,
+                                                NORMALIZE_DIRECTIONS=True, sesop_freq=1.0/390.0, weight_decay_rate=0.0002)[0]
+experiments[len(experiments)] = cifar_multinode(n=1, h=0, fixed_bn_during_sesop=True, DISABLE_VECTOR_BREAKING=False,
+                                                NORMALIZE_DIRECTIONS=True, sesop_freq=1.0 / 390.0,
+                                                weight_decay_rate=0.0)[0]
+
+#
+#
+#
+experiments[len(experiments)] = cifar_multinode(n=1, h=4, fixed_bn_during_sesop=True, DISABLE_VECTOR_BREAKING=False,
+                                                NORMALIZE_DIRECTIONS=True, sesop_freq=1.0/390.0,
+                                                weight_decay_rate=0.0002)[0]
+experiments[len(experiments)] = cifar_multinode(n=1, h=4, fixed_bn_during_sesop=False, DISABLE_VECTOR_BREAKING=False,
+                                                NORMALIZE_DIRECTIONS=True, sesop_freq=1.0/390.0,
+                                                weight_decay_rate=0.0002)[0]
+#
+
+experiments[len(experiments)] = cifar_multinode(n=1, h=4, fixed_bn_during_sesop=True, DISABLE_VECTOR_BREAKING=False,
+                                                NORMALIZE_DIRECTIONS=True, sesop_freq=1.0 / 390.0,
+                                                weight_decay_rate=0.0)[0]
+experiments[len(experiments)] = cifar_multinode(n=1, h=4, fixed_bn_during_sesop=False, DISABLE_VECTOR_BREAKING=False,
+                                                NORMALIZE_DIRECTIONS=True, sesop_freq=1.0 / 390.0,
+                                                weight_decay_rate=0.0)[0]
+
 
 runner = ExperimentRunner(experiments, force_rerun=True)
 runner.run()

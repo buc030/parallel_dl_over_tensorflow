@@ -2,13 +2,13 @@
 import tensorflow as tf
 import numpy as np
 import shutil
-
+import tf_utils
 from tensorflow.examples.tutorials.mnist import input_data
 
 from dataset_manager import DatasetManager
 from batch_provider import SimpleBatchProvider
 
-from sesop_optimizer import SubspaceOptimizer
+from seboost_optimizer import SeboostOptimizer
 
 
 class FCLayer:
@@ -63,82 +63,54 @@ x, labels = bp.batch()
 with tf.name_scope('main_model'):
     mlp = MLP(x, labels, 10, 3)
 
+import argparse
 
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    if v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+parser = argparse.ArgumentParser(description='Run a simple experiment.')
+parser.add_argument('-lr', type=float, nargs=1, required=True, help='Starting learning rate')
+parser.add_argument('-VECTOR_BREAKING', type=str2bool, nargs=1, required=True, help='')
+parser.add_argument('-adaptable_learning_rate', type=str2bool, nargs=1, required=True, help='')
+
+args = parser.parse_args()
 
 update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-
-lr = tf.Variable(0.02, dtype=tf.float32, trainable=False)
-lr_placeholder = tf.placeholder(dtype=tf.float32)
-update_lr = tf.assign(lr, lr_placeholder)
-
-with tf.name_scope('sesop_optimizer'):
-    with tf.control_dependencies(update_ops):
-        sgd_optim = tf.train.GradientDescentOptimizer(lr)
-        sgd_grads = sgd_optim.compute_gradients(mlp.loss)
-
-        sgd_op = sgd_optim.minimize(mlp.loss)
-
-
-full_loss_summary = tf.summary.scalar('full_loss', mlp.loss, ['full_loss'])
-tf.summary.scalar('loss_during_sgd', mlp.loss, ['sgd_summaries'])
-tf.summary.scalar('weights_norm_during_sgd', tf.global_norm(tf.trainable_variables()), ['sgd_summaries'])
-tf.summary.scalar('grad_norm_norm_during_sgd', tf.global_norm(sgd_grads), ['sgd_summaries'])
-tf.summary.scalar('learning_rate', lr, ['sgd_summaries'])
-
-
-with tf.name_scope('sesop_optimizer'):
-    with tf.control_dependencies(update_ops):
-        optim = SubspaceOptimizer(mlp.loss, tf.trainable_variables(), 10, VECTOR_BREAKING=False)
+with tf.control_dependencies(update_ops):
+    optimizer = SeboostOptimizer(mlp.loss, bp, tf.trainable_variables(), history_size=10,
+                                 VECTOR_BREAKING=args.VECTOR_BREAKING[0],
+                                 lr=args.lr[0],
+                                 batch_size=100,
+                                 train_dataset_size=50000,
+                                 adaptable_learning_rate=args.adaptable_learning_rate[0],
+                                 num_of_batches_per_sesop=10)
 
 
 with tf.Session() as sess:
-    print 'Write graph into tensorboard'
-    shutil.rmtree('/tmp/generated_data/1')
-    writer = tf.summary.FileWriter('/tmp/generated_data/1')
+
+    #shutil.rmtree('/tmp/generated_data/1')
+    tensorboard_dir = tf_utils.allocate_tensorboard_dir()
+
+    print 'Write graph into tensorboard into: ' + str(tensorboard_dir)
+    writer = tf.summary.FileWriter(tensorboard_dir)
     writer.add_graph(sess.graph)
     writer.flush()
 
-    optim.set_summary_writer(writer)
+    writer.add_summary(sess.run(tf.summary.text('args', tf.constant(str(args)))))
+    optimizer.set_summary_writer(writer)
 
     sess.run(tf.local_variables_initializer())
     sess.run(tf.global_variables_initializer())
 
     bp.custom_runner.start_threads(sess)
 
-    sgd_summaries = tf.summary.merge_all('sgd_summaries')
+    for epoch in range(100):
+        optimizer.run_epoch(sess)
 
-    for i in range(100):
-        #do 100 sgd steps
-        for j in range(100):
-            s = sess.run(sgd_summaries)
-            writer.add_summary(s, i*100 + j)
-
-            sess.run(sgd_op)
-
-
-
-
-        feed_dicts = []
-        for z in range(10):
-            _x, _labels = sess.run([x, labels])
-            feed_dicts.append({ x : _x, labels : _labels})
-
-
-        bp.set_deque_batch_size(sess, 50000)
-        writer.add_summary(sess.run(full_loss_summary), 2*i)
-        bp.set_deque_batch_size(sess, 100)
-
-        print 'i = ' + str(i)
-        print 'loss before = ' + str(sess.run(mlp.loss, feed_dicts[0]))
-        _distance_sesop_moved = optim.minimize(session=sess, feed_dicts=feed_dicts)
-        if _distance_sesop_moved is not None:
-            pass
-            # print 'setting lr to: ' + str(_distance_sesop_moved/500.00)
-            # sess.run(update_lr, {lr_placeholder : _distance_sesop_moved/500.00})
-
-        print 'loss  after = ' + str(sess.run(mlp.loss, feed_dicts[0]))
-        print '------------------'
-
-        bp.set_deque_batch_size(sess, 50000)
-        writer.add_summary(sess.run(full_loss_summary), 2*i + 1)
-        bp.set_deque_batch_size(sess, 100)

@@ -25,9 +25,11 @@ from collections import namedtuple
 import numpy as np
 import tensorflow as tf
 import six
+import tf_utils
 
 from tensorflow.python.training import moving_averages
 
+from removeable_bn import RemoveableBNLayer
 
 HParams = namedtuple('HParams',
                      'batch_size, num_classes, min_lrn_rate, lrn_rate, '
@@ -58,7 +60,84 @@ class ResNet(object):
     self.mode = mode
 
 
+    self.bn_layers = []
+    self.params_stack = []
+    self.res_layers_shortcut_end = []
+
     self._extra_train_ops = []
+
+
+  def pop_bns(self, sess, fds):
+
+    sess.run([bn.set_is_not_updating[0] for bn in self.bn_layers])
+
+    for bn in self.bn_layers:
+      bn.pop_bn(sess, fds)
+
+    #SV NOTE. SV ARTICLE
+    sess.run(self.fix_regularization_after_pop_bn)
+
+    sess.run([bn.set_is_not_updating[1] for bn in self.bn_layers])
+
+
+  def push_bns(self, sess, fds):
+    #[::-1]
+    sess.run([bn.set_is_not_updating[0] for bn in self.bn_layers])
+
+    for bn in self.bn_layers:
+      bn.push_bn(sess, fds)
+
+    sess.run(self.fix_regularization_after_push_bn)
+
+    sess.run([bn.set_is_not_updating[1] for bn in self.bn_layers])
+
+
+
+  def _decay(self):
+    """L2 weight decay loss."""
+    #SV DEBUG
+    self.fix_regularization_after_pop_bn = []
+    self.fix_regularization_after_push_bn = []
+    #return 0
+
+    costs = []
+    trainable_variables = self.hvar_mgr.all_hvars
+    self.after_bn_decay_rates = {}
+    for bn in self.bn_layers:
+        params_shape = [bn.var.get_shape()[-1]]
+        self.after_bn_decay_rates[bn.prev_layer_w] = tf.Variable(initial_value=np.ones(params_shape, np.float32)*self.hps.weight_decay_rate, trainable=False)
+
+      #self.after_bn_decay_rates[bn.prev_layer_b] = self.after_bn_decay_rates[bn.prev_layer_w]
+
+    for var in trainable_variables:
+      if var.var.op.name.find(r'DW') > 0:
+        if var.var in self.after_bn_decay_rates:
+            sq = (var.out()*var.out())
+            reg = tf.reduce_sum(sq, [0, 1, 2])/2.0
+            #print 'reg = ' + str(reg)
+
+            #assert (False)
+            costs.append(tf.reduce_sum(self.after_bn_decay_rates[var.var]*reg))
+            #costs.append(self.after_bn_decay_rates[var.var]*tf.nn.l2_loss(var.out()))
+
+        else:
+          costs.append(self.hps.weight_decay_rate * tf.nn.l2_loss(var.out()))
+        # tf.summary.histogram(var.op.name, var)
+
+    self.fix_regularization_after_pop_bn = \
+      [tf.assign(self.after_bn_decay_rates[bn.prev_layer_w], self.after_bn_decay_rates[bn.prev_layer_w] * (bn.saved_var/(bn.saved_gamma*bn.saved_gamma)))
+       for bn in self.bn_layers]
+
+    self.fix_regularization_after_push_bn = \
+      [tf.assign(self.after_bn_decay_rates[bn.prev_layer_w], self.after_bn_decay_rates[bn.prev_layer_w] * ((bn.saved_gamma*bn.saved_gamma)/bn.saved_var))
+       for bn in self.bn_layers]
+
+    #print 'self.fix_regularization_after_pop_bn = ' + str(self.fix_regularization_after_pop_bn)
+    #assert (False)
+    # self.fix_regularization_after_pop_bn = []
+    # self.fix_regularization_after_push_bn = []
+
+    return tf.add_n(costs)
 
   def build_graph(self):
     """Build a whole graph for the model."""
@@ -66,6 +145,7 @@ class ResNet(object):
     if self.mode == 'train':
       self._build_train_op()
     self.summaries = tf.summary.merge_all()
+
 
   def _stride_arr(self, stride):
     """Map a stride scalar to the stride array for tf.nn.conv2d."""
@@ -89,12 +169,15 @@ class ResNet(object):
       self.res_layers = []
 
       res_func = self._residual
+      # SV DEBUG
       filters = [16, 16, 32, 64]
+      #filters = [16, 16, 16, 16]
+
       # Uncomment the following codes to use w28-10 wide residual network.
       # It is more memory efficient than very deep residual network and has
       # comparably good performance.
       # https://arxiv.org/pdf/1605.07146v1.pdf
-      filters = [16, 160, 320, 640]
+      #filters = [16, 160, 320, 640]
       #Update hps.num_residual_units to 9 (or 4???)
 
     with tf.variable_scope('unit_1_0'):
@@ -179,7 +262,18 @@ class ResNet(object):
   # TODO(xpan): Consider batch_norm in contrib/layers/python/layers/layers.py
   def _batch_norm(self, name, x):
     """Batch normalization."""
+
+    #x = tf_utils.tf_print(x, [x[0][0][0][0]], 'before batch_norm (' + name + ')')
     with tf.variable_scope(name):
+      prev_layer_w, prev_layer_b = self.params_stack[-1]
+      #SV DEBUG
+      self.params_stack = self.params_stack[:-1]
+
+      bn_layer = RemoveableBNLayer(x, prev_layer_w, prev_layer_b, tf.constant(True)) #tf.constant(self.mode == 'train'))
+      self.bn_layers.append(bn_layer)
+
+      #return tf_utils.tf_print(bn_layer.out, [bn_layer.out[0][0][0][0]], 'after batch_norm (' + name + ')')
+      return bn_layer.out
 
       params_shape = [x.get_shape()[-1]]
 
@@ -231,7 +325,7 @@ class ResNet(object):
       return y
 
   #x,160,320
-  def _residual(self, x, in_filter, out_filter, stride,
+  def _residual_original(self, x, in_filter, out_filter, stride,
                 activate_before_residual=False):
     """Residual unit with 2 sub layers."""
     if activate_before_residual:
@@ -240,10 +334,12 @@ class ResNet(object):
         x = self._relu(x, self.hps.relu_leakiness)
         orig_x = x
     else:
+        #problematic (second layer)
       with tf.variable_scope('residual_only_activation'):
         orig_x = x
         x = self._batch_norm('init_bn', x)
         x = self._relu(x, self.hps.relu_leakiness)
+
 
     with tf.variable_scope('sub1'):
       x = self._conv('conv1', x, 3, in_filter, out_filter, stride)
@@ -265,6 +361,59 @@ class ResNet(object):
 
     self.res_layers.append(x)
     return x
+
+  # SV DEBUG, SV ARTICLE, So the input for a block depends on the last linear layer of the previews block.
+  # And thus, the first BN in the current block is embedded into the weights of the linear layer in the previews block.
+  # as a result, the shortcut is "pushed" one stage forward, and the NN mismatch!
+  #To solve this problem we start the shortcut after the first BN, and end it after the first BN of the next block!
+  #Note this shortcut is non intuitive, since it cross residual blocks.
+  def _residual(self, x, in_filter, out_filter, stride,
+                  activate_before_residual=False):
+        """Residual unit with 2 sub layers."""
+        if activate_before_residual:
+            with tf.variable_scope('shared_activation'):
+                x = self._batch_norm('init_bn', x)
+                self.res_layers_shortcut_end.append(x)
+                x = self._relu(x, self.hps.relu_leakiness)
+        else:
+            # problematic (second layer)
+            with tf.variable_scope('residual_only_activation'):
+                x = self._batch_norm('init_bn', x)
+
+                #save start shortcut location for next block
+                self.res_layers_shortcut_end.append(x)
+
+                x = self._relu(x, self.hps.relu_leakiness)
+
+                with tf.variable_scope('sub_add'):
+                    orig_x = self.res_layers_shortcut_end[-2]
+                    if x.get_shape()[1] != orig_x.get_shape()[1]:
+                    #by construction of the NN we have x.get_shape()[1] = 2*orig_x.get_shape()[1]
+                    #tf.nn.avg_pool(orig_x, [1,2,2,1], [1,2,2,1], 'VALID')
+                        orig_x = tf.nn.avg_pool(tf.concat([orig_x, orig_x], axis=3), [1, 2, 2, 1], [1, 2, 2, 1], 'VALID')
+                        # orig_x = tf.nn.avg_pool(orig_x, stride, stride, 'VALID')
+                        # orig_x = tf.pad(
+                        #     orig_x, [[0, 0], [0, 0], [0, 0],
+                        #              [(orig_x.get_shape()[1] - x.get_shape()[1]) // 2, (orig_x.get_shape()[1] - x.get_shape()[1]) // 2]])
+                    #end shortcut
+                    x += orig_x
+
+
+
+
+        with tf.variable_scope('sub1'):
+            x = self._conv('conv1', x, 3, in_filter, out_filter, stride)
+
+        with tf.variable_scope('sub2'):
+            x = self._batch_norm('bn2', x)
+            x = self._relu(x, self.hps.relu_leakiness)
+            x = self._conv('conv2', x, 3, out_filter, out_filter, [1, 1, 1, 1])
+
+
+        tf.logging.debug('image after unit %s', x.get_shape())
+
+        self.res_layers.append(x)
+        return x
 
   def _bottleneck_residual(self, x, in_filter, out_filter, stride,
                            activate_before_residual=False):
@@ -301,16 +450,6 @@ class ResNet(object):
     tf.logging.info('image after unit %s', x.get_shape())
     return x
 
-  def _decay(self):
-    """L2 weight decay loss."""
-    costs = []
-    trainable_variables = self.hvar_mgr.all_hvars
-    for var in trainable_variables:
-      if var.var.op.name.find(r'DW') > 0:
-        costs.append(tf.nn.l2_loss(var.out()))
-        # tf.summary.histogram(var.op.name, var)
-
-    return tf.multiply(self.hps.weight_decay_rate, tf.add_n(costs))
 
   def _conv(self, name, x, filter_size, in_filters, out_filters, strides):
     """Convolution."""
@@ -366,7 +505,13 @@ class ResNet(object):
           'DW', [filter_size, filter_size, in_filters, out_filters],
           tf.float32, initializer=tf.random_normal_initializer(
               stddev=np.sqrt(2.0/n)))
-      return tf.nn.conv2d(x, kernel, strides, padding='SAME', data_format='NHWC')
+
+      b = self.get_variable_func(
+        'Db', [out_filters],
+        tf.float32, initializer=tf.constant_initializer(0.0))
+
+      self.params_stack.append([kernel.var, b.var])
+      return tf.nn.conv2d(x, kernel.out(), strides, padding='SAME', data_format='NHWC') + b.out()
 
   def _relu(self, x, leakiness=0.0):
     """Relu, with optional leaky support."""
@@ -380,7 +525,9 @@ class ResNet(object):
         initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
     b = self.get_variable_func('biases', [out_dim],
                         initializer=tf.constant_initializer())
-    return tf.nn.xw_plus_b(x, w, b)
+
+    self.params_stack.append([w.var, b.var])
+    return tf.nn.xw_plus_b(x, w.out(), b.out())
 
   def _global_avg_pool(self, x):
     assert x.get_shape().ndims == 4

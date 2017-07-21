@@ -7,10 +7,50 @@ from time import sleep
 import threading
 import numpy as np
 
+import sys
+import shutil
+import functools
+
+def allocate_tensorboard_dir():
+    BASE_DIR = '/home/shai/tensorflow/generated_data'
+    used = [int(x) for x in shutil.os.listdir(BASE_DIR)]
+    if len(used) == 0:
+        return BASE_DIR + '/' + str(1)
+    return BASE_DIR + '/' + str(max(used) + 1)
+
+
+def lazy_property(function):
+    attribute = '_cache_' + function.__name__
+
+    @property
+    @functools.wraps(function)
+    def decorator(self):
+        if not hasattr(self, attribute):
+            with tf.name_scope(attribute.replace('_cache_', '')):
+                setattr(self, attribute, function(self))
+        return getattr(self, attribute)
+
+    return decorator
+
+
+
+def tf_print(op, tensors, message=None):
+    def print_message(x):
+        sys.stdout.write(message + " %s\n" % x)
+        return x
+
+    prints = [tf.py_func(print_message, [tensor], tensor.dtype) for tensor in tensors]
+    with tf.control_dependencies(prints):
+        op = tf.identity(op)
+    return op
+
 #feed_dicts hold mapping for the input data, each entry hold a batch.
 #additional_feed_dict hold mapping to variables or something like that.
 #
-def avarge_on_feed_dicts(sess, target_ops, feed_dicts, additional_feed_dict={}):
+def avarge_on_feed_dicts(sess, target_ops, feed_dicts, additional_feed_dict=None):
+    if additional_feed_dict is None:
+        additional_feed_dict = {}
+
     feed_dict = additional_feed_dict
     feed_dict.update(feed_dicts[0])
     res = sess.run(target_ops, feed_dict=feed_dict)
@@ -25,6 +65,14 @@ def avarge_on_feed_dicts(sess, target_ops, feed_dicts, additional_feed_dict={}):
         res[j] /= len(feed_dicts)
 
     return res
+
+def avarge_n_calls(sess, target_op, n):
+    res = np.zeros(1)
+    for chunk in range(n):
+        res += sess.run(target_op)
+
+    return res[0]/float(n)
+
 
 
 
@@ -96,12 +144,12 @@ class CustomRunner(object):
         images_batch, labels_batch = self.curr_queue.dequeue_many(self.batch_size_tf_var)
         return images_batch, labels_batch
 
-    def __init__(self, train_features, train_labels, test_features, test_labels, batch_size):
-        self.train_features = train_features[10000:]
-        self.train_labels = train_labels[10000:]
+    def __init__(self, train_features, train_labels, test_features, test_labels, batch_size, sesop_part_size):
+        self.train_features = train_features[sesop_part_size:]
+        self.train_labels = train_labels[sesop_part_size:]
 
-        self.sesop_train_features = train_features[:10000]
-        self.sesop_train_labels = train_labels[:10000]
+        self.sesop_train_features = train_features[:sesop_part_size]
+        self.sesop_train_labels = train_labels[:sesop_part_size]
 
 
         self.test_features = test_features
@@ -113,9 +161,18 @@ class CustomRunner(object):
         self.batch_size_tf_placeholder = tf.placeholder(tf.int32)
         self.set_deque_batch_size_op = tf.assign(self.batch_size_tf_var, self.batch_size_tf_placeholder)
 
+        assert (len(self.train_features.shape) == 2)
         self.dim = self.train_features.shape[1]
 
-        self.label_dim = self.train_labels.shape[1]
+        assert (len(self.train_labels.shape) == 1 or len(self.train_labels.shape) == 2)
+        if len(self.train_labels.shape) == 1:
+            self.train_labels = self.train_labels.reshape([self.train_labels.shape[0], 1])
+            self.test_labels = self.test_labels.reshape([self.test_labels.shape[0], 1])
+            self.sesop_train_labels = self.sesop_train_labels.reshape([self.sesop_train_labels.shape[0], 1])
+            self.label_dim = 1
+
+        else:
+            self.label_dim = self.train_labels.shape[1]
 
         self.train_dataX = tf.placeholder(dtype=tf.float32, shape=[None, self.dim])
         self.train_dataY = tf.placeholder(dtype=tf.float32, shape=[None, self.label_dim])

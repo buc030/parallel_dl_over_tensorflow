@@ -30,7 +30,8 @@ class Experiment:
         'subspace_optimizer' : 'BFGS',
         'DISABLE_VECTOR_BREAKING' : True,
         'NORMALIZE_DIRECTIONS' : False,
-        'learning_rate_per_node': False
+        'learning_rate_per_node': False,
+        'weight_decay_rate': None
     }
 
     FLAGS_ALIASES = {'batch_size' : 'b'}

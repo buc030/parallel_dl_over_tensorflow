@@ -4,6 +4,8 @@ import numpy as np
 
 from my_external_optimizer import ScipyOptimizerInterface
 
+from tf_utils import avarge_on_feed_dicts
+
 from tf_utils import lazy_property
 
 class SubspaceOptimizer:
@@ -45,6 +47,9 @@ class SubspaceOptimizer:
         #tf.contrib.graph_editor.graph_replace(target_ts, replacement_ts, dst_scope='', src_scope='',
         #                                      reuse_dst_scope=False)
 
+    @lazy_property
+    def history_candicate_norm(self):
+        return tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
 
     ##################### MINIMIZE OPERATIONS ##########################
     ######## this is by the same order they will be executed! ##########
@@ -105,6 +110,10 @@ class SubspaceOptimizer:
         self.total_iter = 0
 
         vector_breaking = optimizer_kwargs['VECTOR_BREAKING']
+        sesop_method = optimizer_kwargs['sesop_method']
+        sesop_options = optimizer_kwargs['sesop_options']
+
+
         assert (vector_breaking == True or vector_breaking == False)
 
 
@@ -135,9 +144,13 @@ class SubspaceOptimizer:
         # self.vars_norm = tf.global_norm([var for var in self.orig_var_list])
         # self.var_outs_norm = tf.global_norm([self.var_out(var) for var in self.orig_var_list])
 
+        #TODO: move to config
+        #SV DEBUG
+        sesop_options = {'maxiter': 200, 'gtol': 1e-6}
+        sesop_method = 'BFGS'
         self.optimizer = \
                 ScipyOptimizerInterface(loss=self.new_loss/self.grad_norm_placeholder, var_list=self.alphas_uniqe, \
-                            equalities=None ,method='BFGS', options={'maxiter': 200, 'gtol': 1e-6})
+                            equalities=None ,method=sesop_method, options=sesop_options)
 
         [self.store_history(h) for h in range(self.history_size)]
         [self.fix_history_after_sesop(h) for h in range(self.history_size)]
@@ -145,10 +158,10 @@ class SubspaceOptimizer:
         self.zero_alphas
         self.take_snapshot
 
-        tf.summary.scalar('sesop_minibatch_new_loss', self.new_loss/self.grad_norm_placeholder, [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
-        tf.summary.scalar('sesop_minibatch_orig_loss', self.orig_loss, [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
-        for h in range(history_size):
-            tf.summary.scalar('new_vector_in_history_norm_' + str(h), tf.global_norm([self.history[var][h] for var in self.orig_var_list]), [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
+        tf.summary.scalar('after_sesop_minibatch_loss_normalized', self.new_loss/self.grad_norm_placeholder, [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
+        tf.summary.scalar('after_sesop_minibatch_loss', self.orig_loss, [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
+        #for h in range(history_size):
+        #    tf.summary.scalar('new_vector_in_history_norm_' + str(h), tf.global_norm([self.history[var][h] for var in self.orig_var_list]), [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
         self.sesop_grad_computations = tf.placeholder(tf.int32)
         tf.summary.scalar('sesop_grad_computations', self.sesop_grad_computations, [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
         self.alpha_summary = tf.summary.histogram('alpha', tf.stack(self.alphas_uniqe), ['alpha_summary'])
@@ -164,7 +177,10 @@ class SubspaceOptimizer:
         self.i_after_iter = 0
         self.i_in_iter = 0
 
-        self.distance_sesop_moved = tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
+        self.distance_seboost_moved = tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
+        self.distance_sesop_moved = tf.global_norm([var - self.var_out(var) for var in self.orig_var_list])
+
+        self.distance_seboost_moved_summary = tf.summary.scalar('distance_seboost_moved', self.distance_seboost_moved, ['distance_seboost_moved'])
         self.distance_sesop_moved_summary = tf.summary.scalar('distance_sesop_moved', self.distance_sesop_moved, ['distance_sesop_moved'])
 
 
@@ -172,7 +188,12 @@ class SubspaceOptimizer:
         self.writer = writer
 
     #return the amount we should have moved since last call
-    def minimize(self, session=None, feed_dicts=None, fetches=None, override_loss_grad_func=None, additional_feed_dict={}):
+    def minimize(self, session=None, feed_dicts=None, fetches=None, override_loss_grad_func=None, additional_feed_dict=None):
+        if additional_feed_dict is None:
+            additional_feed_dict = {}
+
+        print 'history_candicate_norm = ' + str(session.run(self.history_candicate_norm))
+
         # 0. add current history
         session.run(self.store_history(self.next_free_h_index))
         self.total_iter += 1
@@ -219,33 +240,43 @@ class SubspaceOptimizer:
             self.writer.add_summary(s, self.i_in_iter)
             self.i_in_iter += 1
 
-        print 'loss after minimize = ' + str(session.run(self.new_loss, feed_dicts[0]))
+        print 'loss after minimize = ' + str(avarge_on_feed_dicts(session, [self.new_loss], feed_dicts))
+
+        #this is how much sesop + sgd moved
+        _distance_sesop_moved = session.run(self.distance_sesop_moved)
+        #TODO: remove additional_feed_dict
+        self.writer.add_summary(session.run(self.distance_sesop_moved_summary, additional_feed_dict), self.i_after_iter)
 
         #3. move results into original variables:
         session.run(self.move_results_to_original)
 
-        print 'loss after move_results_to_original = ' + str(session.run(self.orig_loss, feed_dicts[0]))
+        print 'loss after move_results_to_original = ' + str(avarge_on_feed_dicts(session, [self.orig_loss], feed_dicts))
 
-        _distance_sesop_moved = session.run(self.distance_sesop_moved)
-        self.writer.add_summary(session.run(self.distance_sesop_moved_summary, additional_feed_dict), self.i_after_iter)
+        #this is how much sesop + sgd moved
+        _distance_seboost_moved = session.run(self.distance_seboost_moved)
+        self.writer.add_summary(session.run(self.distance_seboost_moved_summary, additional_feed_dict), self.i_after_iter)
 
 
         #4. Fix the history:
         session.run(self.fix_history_after_sesop(self.next_free_h_index))
 
-        print 'loss after fix_history_after_sesop = ' + str(session.run(self.orig_loss, feed_dicts[0]))
+        print 'loss after fix_history_after_sesop = ' + str(avarge_on_feed_dicts(session, [self.orig_loss], feed_dicts))
 
         #5. take snapshot to use next time we are being called, and zero the alphas
         session.run(self.take_snapshot)
-        print 'loss after take_snapshot = ' + str(session.run(self.orig_loss, feed_dicts[0]))
+        print 'loss after take_snapshot = ' + str(avarge_on_feed_dicts(session, [self.orig_loss], feed_dicts))
 
         session.run(self.zero_alphas)
-        print 'loss after zero_alphas = ' + str(session.run(self.orig_loss, feed_dicts[0]))
+        print 'loss after zero_alphas = ' + str(avarge_on_feed_dicts(session, [self.orig_loss], feed_dicts))
 
+        additional_feed_dict.update({self.orig_loss : avarge_on_feed_dicts(session, [self.orig_loss], feed_dicts)[0]})
+        additional_feed_dict.update({self.new_loss: avarge_on_feed_dicts(session, [self.new_loss], feed_dicts)[0]})
 
         self.writer.add_summary(session.run(self.summaries_after_iter, additional_feed_dict), self.i_after_iter)
         self.i_after_iter += 1
 
         self.next_free_h_index = (self.next_free_h_index + 1) % self.history_size
 
-        return _distance_sesop_moved
+        print '_distance_seboost_moved = ' + str(_distance_seboost_moved)
+        print '_distance_sesop_moved = ' + str(_distance_sesop_moved)
+        return _distance_seboost_moved

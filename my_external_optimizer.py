@@ -102,7 +102,7 @@ class ExternalOptimizerInterface(object):
                                                 accumulated_dims[1:])]
 
   def minimize(self, session=None, feed_dicts=None, fetches=None,
-               step_callback=None, loss_callback=None, override_loss_grad_func=None, additional_feed_dict={}):
+               step_callback=None, loss_callback=None, override_loss_grad_func=None, additional_feed_dict=None):
     """Minimize a scalar `Tensor`.
 
     Variables subject to optimization are updated in-place at the end of
@@ -126,6 +126,8 @@ class ExternalOptimizerInterface(object):
     session = session or ops.get_default_session()
     feed_dicts = feed_dicts or []
     fetches = fetches or []
+    if additional_feed_dict is None:
+        additional_feed_dict = {}
     self.additional_feed_dict = additional_feed_dict
 
     loss_callback = loss_callback or (lambda *fetches: None)
@@ -139,6 +141,7 @@ class ExternalOptimizerInterface(object):
     else:
         loss_grad_func = override_loss_grad_func
 
+    self.loss_grad_func = loss_grad_func
     # Construct equality constraint functions and associated gradients.
     equality_funcs = self._make_eval_funcs(
         self._equalities, session, feed_dicts, fetches)

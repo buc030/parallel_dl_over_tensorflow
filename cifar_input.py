@@ -20,10 +20,10 @@ import tensorflow as tf
 
 
 class CifarInput:
-    def __init__(self, batch_size):
-        self.sesop_data_path = 'CIFAR_data/cifar-10-batches-bin/sesop_data_batch.bin'
-        self.data_path = 'CIFAR_data/cifar-10-batches-bin/data_batch*'
-        self.test_path = 'CIFAR_data/cifar-10-batches-bin/test_batch.bin'
+    def __init__(self, batch_size, path='./'):
+        self.sesop_data_path = path + 'CIFAR_data/cifar-10-batches-bin/sesop_data_batch.bin'
+        self.data_path = path + 'CIFAR_data/cifar-10-batches-bin/data_batch*'
+        self.test_path = path + 'CIFAR_data/cifar-10-batches-bin/test_batch.bin'
 
         self.image_size = 32
         self.depth = 3

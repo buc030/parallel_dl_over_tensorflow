@@ -225,7 +225,10 @@ class StochasticCGOptimizer:
         self.sess.run([self.assign_into_conjugate_op, self.assign_beta_op, self.assign_into_last_snapshot_op],
                       feed_dict=feed_dict)
 
-    def run_iter(self, sess, feed_dict={}):
+    def run_iter(self, sess, feed_dict=None):
+        if feed_dict is None:
+            feed_dict = {}
+
         if (len(self.losses) + 1) % self.iters_count == 0:
             print 'updating conjugate'
             self.update_conjugate(feed_dict)

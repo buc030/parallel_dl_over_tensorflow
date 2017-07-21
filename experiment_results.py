@@ -68,6 +68,9 @@ class ExperimentResults:
         plt.xlabel('Epochs')
         plt.ylabel('Error')
         full_label = 'train(' + self.label + ')'
+
+        #iters_per_epoch = self.train_dataset_size/self.batch_size
+
         if flag_names_to_use_in_label is not None:
             full_label = self.buildLabel(flag_names_to_use_in_label)
         plt.plot(range(len(self.trainErrorPerItereation)), self.trainErrorPerItereation, '-', label=full_label)
@@ -474,6 +477,22 @@ class ExperimentComperator:
 
                     fig.add_subplot(224)
                     expr.results[idx].plotTrainError((0, 100), diff + [group_by])
+                elif error_type == 'debug_sgd':
+                    fig = plt.figure(figsize=(10, 8))
+                    temp = expr.results[idx]
+
+                    fig.add_subplot(221)
+                    temp.plot_grad_norm_during_sgd(diff + [group_by])
+
+                    fig.add_subplot(222)
+                    temp.plot_weight_norm_during_sgd(diff + [group_by])
+
+                    fig.add_subplot(223)
+                    temp.plotTrainErrorPerIteration(diff + [group_by])
+
+                    fig.add_subplot(224)
+                    temp.plot_input_norm_during_sgd(diff + [group_by])
+
                 else:
                     expr.results[idx].plotTrainError((0,100), diff + [group_by])
             #plt.legend(loc='center left', bbox_to_anchor=(0.4, 1))

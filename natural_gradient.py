@@ -61,8 +61,10 @@ class NaturalGradientOptimizer:
 
         self.cg = ScipyOptimizerInterface(loss=self.loss, var_list=train_variables,
             hessp=self.fisher_information_matrix, \
-            method='trust-ncg', options={'maxiter': 10})
+            method='trust-ncg', options={'maxiter': 200, 'gtol': 1e-6})
 
-    def minimize(self, sess, feed_dicts, loss_callback=None, additional_feed_dict={}):
+    def minimize(self, sess, feed_dicts, loss_callback=None, additional_feed_dict=None):
+        if additional_feed_dict is None:
+            additional_feed_dict = {}
         self.sess = sess
         self.cg.minimize(self.sess, feed_dicts=feed_dicts, additional_feed_dict=additional_feed_dict)

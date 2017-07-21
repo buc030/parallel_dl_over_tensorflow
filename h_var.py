@@ -112,10 +112,20 @@ class HVar:
 
             if self.node_id == 0:
                 terms = [self.var]
-                for r, a in zip(self.history, self.history_aplha):
-                    terms.append(r * a)
+
+                #normalizer = tf.global_norm([1.0] + self.history_aplha + self.replicas_aplha)
+
+                limit = 1.0 / len(self.history_aplha + self.replicas_aplha)**0.5
+
+
+                for h, a in zip(self.history, self.history_aplha):
+                    normalized_alpha = a * limit
+                    normalized_alpha = tf.maximum(tf.minimum(normalized_alpha, limit), -limit)
+                    terms.append(h * normalized_alpha)
 
                 for r, a in zip(self.replicas, self.replicas_aplha):
+                    normalized_alpha = a * limit
+                    normalized_alpha = tf.maximum(tf.minimum(normalized_alpha, limit), -limit)
                     terms.append(r * a)
 
                 self.o = tf.add_n(terms)
@@ -159,11 +169,15 @@ class HVar:
         for r in self.replicas:
             terms.append(r)
 
-        assign_op = tf.assign(self.history[self.next_idx], tf.add_n(terms)/self.nodes)
+        avrage_direction = tf.add_n(terms)/self.nodes
+        update_history_op = tf.assign(self.history[self.next_idx], avrage_direction)
 
         #Now all the alphas are zero, and we want to start optimization from the avarage of the progresses (which is history[self.next_idx] at the moment)
         #so we actually need var = snapshot + history[self.next_idx]
-        return [assign_op, with_dependencies(terms + [assign_op], tf.assign(self.var, self.last_snapshot + assign_op))]
+        with tf.control_dependencies([update_history_op]):
+            return [tf.assign(self.var, self.last_snapshot + avrage_direction)]
+
+        #return [assign_op, with_dependencies(terms + [assign_op], tf.assign(self.var, self.last_snapshot + avrage_direction))]
 
 
     # create an op that puts var of this node into its replica
