@@ -6,7 +6,6 @@ from sesop_optimizer import SubspaceOptimizer
 
 from tf_utils import avarge_on_feed_dicts, avarge_n_calls
 
-
 # Usage:
 # ----------
 # run_epoch
@@ -25,6 +24,7 @@ class SeboostOptimizer:
     def __init__(self, loss, batch_provider, var_list, history_size, **optimizer_kwargs):
         initial_lr = optimizer_kwargs['lr']
         self.lr = tf.Variable(initial_lr, dtype=tf.float32, trainable=False)
+        self.curr_lr = initial_lr
         self.lr_placeholder = tf.placeholder(dtype=tf.float32)
         self.update_lr = tf.assign(self.lr, self.lr_placeholder)
         self.input = batch_provider.batch()
@@ -66,16 +66,18 @@ class SeboostOptimizer:
 
         self.explotion_counter = 0
         self.iter = 0
+        self.steps_since_last_sesop_update = 0
 
     def run_sesop(self, sess):
         if self.history_size == 0:
             self.iter += 1
+            self.steps_since_last_sesop_update += 1
             return
 
         self.bp.set_deque_batch_size(sess, self.train_dataset_size/2)
         self.writer.add_summary(sess.run(self.full_loss_summary, {self.loss : avarge_n_calls(sess, self.loss, 2)}), 2 * self.iter)
         self.bp.set_deque_batch_size(sess, self.batch_size)
-
+        #tf.tensorboard.tensorboard
         feed_dicts = []
         for z in range(self.num_of_batches_per_sesop):
             _x, _labels = sess.run(self.input)
@@ -96,11 +98,28 @@ class SeboostOptimizer:
         else:
             self.explotion_counter = 0
 
-        _distance_sesop_moved = self.subspace_optim.minimize(session=sess, feed_dicts=feed_dicts)
-        if self.adaptable_learning_rate == True and _distance_sesop_moved is not None:
-            print 'setting lr to: ' + str(_distance_sesop_moved / float((self.train_dataset_size / self.batch_size)))
-            sess.run(self.update_lr,
-                     {self.lr_placeholder: _distance_sesop_moved / float((self.train_dataset_size / self.batch_size))})
+        _sgd_distance_moved, _distance_sesop_moved, _distance_seboost_moved, _sgd_sesop_dot_product = self.subspace_optim.minimize(session=sess, feed_dicts=feed_dicts)
+
+        #redundancy = _sgd_distance_moved/(float(self.train_dataset_size/self.batch_size)*self.curr_lr)
+        if self.adaptable_learning_rate == True:
+            #if SESOP corrected us, we update the lr
+            if _distance_sesop_moved > 1e-5:
+                # model: iters*lr*redundancy = sgd_distance
+                # where redundancy is between 0 and 1, and it means, what is the precentage of distance we "lose" in an epoch
+                # Lets plot redundancy = sgd_distance/(iters*lr)
+                # We will then set lr = desigred_distance/(iters*redundancy)
+
+                #self.curr_lr = _distance_seboost_moved/(float(self.train_dataset_size/self.batch_size)*redundancy)
+
+                #self.curr_lr = _distance_seboost_moved/(float(self.train_dataset_size/self.batch_size)*redundancy)
+
+                next_lr = self.curr_lr * (1.0 + _sgd_sesop_dot_product/(_sgd_distance_moved*_sgd_distance_moved))
+                if next_lr > 0:
+                    self.curr_lr = next_lr
+                    print 'setting lr to: ' + str(self.curr_lr)
+                    sess.run(self.update_lr, {self.lr_placeholder: self.curr_lr})
+                else:
+                    print 'not setting lr: ' + str(next_lr)
 
         self.bp.set_deque_batch_size(sess, self.train_dataset_size/2)
         self.writer.add_summary(sess.run(self.full_loss_summary, {self.loss: avarge_n_calls(sess, self.loss, 2)}), 2 * self.iter + 1)
@@ -116,5 +135,6 @@ class SeboostOptimizer:
             s = sess.run(self.sgd_summaries)
             self.writer.add_summary(s, self.iter * (self.train_dataset_size/self.batch_size) + i)
             sess.run(self.sgd_op)
+            self.steps_since_last_sesop_update += 1
 
 

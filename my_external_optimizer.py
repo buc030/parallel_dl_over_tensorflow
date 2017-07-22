@@ -298,6 +298,8 @@ class ScipyOptimizerInterface(ExternalOptimizerInterface):
   def __init__(self, loss, var_list=None, equalities=None, inequalities=None, **optimizer_kwargs):
       super(ScipyOptimizerInterface, self).__init__(loss, var_list, equalities, inequalities, **optimizer_kwargs)
 
+  def get_packed_loss_grad(self):
+      return self._packed_loss_grad
 
   def _minimize(self, initial_val, loss_grad_func, equality_funcs,
                 equality_grad_funcs, inequality_funcs, inequality_grad_funcs,

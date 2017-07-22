@@ -13,7 +13,7 @@ from batch_provider import MnistBatchProvider
 
 from tf_utils import avarge_on_feed_dicts, avarge_n_calls
 
-Model = collections.namedtuple('Model', ['loss', 'accuracy'])
+Model = collections.namedtuple('Model', ['loss', 'accuracy', 'predictions'])
 
 def cnn_model_fn(features, labels, enable_dropout):
   """Model function for CNN."""
@@ -59,7 +59,7 @@ def cnn_model_fn(features, labels, enable_dropout):
   correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(onehot_labels, 1))
   accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
-  return Model(loss=loss, accuracy=accuracy)
+  return Model(loss=loss, accuracy=accuracy, predictions=logits)
 
 
 
@@ -86,7 +86,8 @@ def my_config():
     num_of_batches_per_sesop = 10
     sesop_private_dataset = False
     disable_dropout_during_sesop = True
-    sesop_method = 'BFGS'
+    #sesop_method = 'CG'
+    sesop_method = 'natural_gradient'
     sesop_options = {'maxiter': 200, 'gtol': 1e-6}
     seboost_base_method = 'SGD'
 
@@ -124,6 +125,7 @@ def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_si
                                  num_of_batches_per_sesop=num_of_batches_per_sesop,
                                  seboost_base_method=seboost_base_method,
                                  sesop_method=sesop_method,
+                                 predictions=model.predictions,
                                  sesop_options=sesop_options)
 
 
@@ -132,7 +134,7 @@ def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_si
         #shutil.rmtree('/tmp/generated_data/1')
 
 
-        print 'Write graph into tensorboard into: ' + str(tensorboard_dir)
+
         writer = tf.summary.FileWriter(tensorboard_dir)
         writer.add_graph(sess.graph)
         writer.flush()
@@ -145,6 +147,7 @@ def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_si
 
         for epoch in range(n_epochs):
             print 'epoch = ' + str(epoch)
+            print 'Write graph into tensorboard into: ' + str(tensorboard_dir)
             ex.info['epoch'] = epoch
 
             print 'Calculating accuracy...'
@@ -172,3 +175,5 @@ def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_si
 
             if disable_dropout_during_sesop == True:
                 sess.run(set_dropout[1])
+
+            print '---------------'
