@@ -89,10 +89,10 @@ class SubspaceOptimizer:
             return self.store_history_ops[h_index]
 
         ops = []
-        #history_norm = 1.0
+        history_norm = 1.0
         #SV DEBUG
         #SV TODO: the natural gradient experiments that worked used history_norm = 1.0!
-        history_norm = tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
+        #history_norm = tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
         for var in self.orig_var_list:
             ops.append(tf.assign(self.history[var][h_index], (var - self.last_snapshot[var])/history_norm))
 
@@ -144,6 +144,7 @@ class SubspaceOptimizer:
         sesop_method = optimizer_kwargs['sesop_method']
         sesop_options = optimizer_kwargs['sesop_options']
         predictions = optimizer_kwargs['predictions']
+        self.normalize_function_during_sesop = optimizer_kwargs['normalize_function_during_sesop']
 
         assert (vector_breaking == True or vector_breaking == False)
 
@@ -248,7 +249,9 @@ class SubspaceOptimizer:
         self.total_iter += 1
 
         # 1. calculate grad norm to normalize function:
-        _alpha_grad_norm = session.run(self.alpha_grad_norm)
+        _alpha_grad_norm = 1.0
+        if self.normalize_function_during_sesop:
+            _alpha_grad_norm = session.run(self.alpha_grad_norm)
 
         additional_feed_dict.update({self.grad_norm_placeholder: _alpha_grad_norm})
 

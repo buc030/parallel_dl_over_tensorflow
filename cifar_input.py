@@ -75,8 +75,8 @@ class CifarInput:
             self.train_queue = self.build_queue(data_path=self.data_path, preprocess=True, shuffle=True, n_threads=1)
             self.train_queue_size = self.train_queue.size()
 
-        with tf.name_scope('sesop_train_data'):
-            self.sesop_train_queue = self.build_queue(data_path=self.sesop_data_path, preprocess=True, shuffle=True, n_threads=1)
+        # with tf.name_scope('sesop_train_data'):
+        #     self.sesop_train_queue = self.build_queue(data_path=self.sesop_data_path, preprocess=True, shuffle=True, n_threads=1)
 
         with tf.name_scope('choose_data_source'):
             self.data_source_idx = tf.Variable(tf.cast(1, tf.int32), trainable=False, name='data_source_idx')
@@ -84,7 +84,7 @@ class CifarInput:
                                        tf.assign(self.data_source_idx, 2)]
 
             self.curr_queue = tf.QueueBase.from_list(tf.cast(self.data_source_idx, tf.int32),
-                                                     [self.test_queue, self.train_queue, self.sesop_train_queue])
+                                                     [self.test_queue, self.train_queue])
 
 
     # build a queue that output examples from data_path
@@ -156,6 +156,8 @@ class CifarInput:
 
     # create a graph that preprocess an image (resize, crop, flip)
     def preprocess_image(self, image):
+        #hflip, random crop
+
         with tf.name_scope('resize_image_with_crop_or_pad'):
             image = tf.image.resize_image_with_crop_or_pad(image, self.image_size + 4, self.image_size + 4)
 

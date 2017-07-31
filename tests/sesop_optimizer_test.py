@@ -113,4 +113,5 @@ with tf.Session() as sess:
 
     for epoch in range(100):
         optimizer.run_epoch(sess)
+        optimizer.run_sesop(sess)
 

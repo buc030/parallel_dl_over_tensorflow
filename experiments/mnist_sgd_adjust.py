@@ -8,14 +8,14 @@ import tf_utils
 from tensorflow.contrib import learn
 from tensorflow.contrib.learn.python.learn.estimators import model_fn as model_fn_lib
 
-from seboost_optimizer import SeboostOptimizer
+from lr_auto_adjust_sgd import SgdAdjustOptimizer
 from batch_provider import MnistBatchProvider
 
 from tf_utils import avarge_on_feed_dicts, avarge_n_calls
 
 Model = collections.namedtuple('Model', ['loss', 'accuracy', 'predictions'])
 
-def cnn_model_fn(features, labels, enable_dropout):
+def cnn_model_fn(features, labels, enable_dropout, weighted_batch):
   """Model function for CNN."""
   # Input Layer
   labels = tf.reshape(labels, [-1])
@@ -53,8 +53,15 @@ def cnn_model_fn(features, labels, enable_dropout):
 
 
   onehot_labels = tf.one_hot(indices=tf.cast(labels, tf.int32), depth=10)
+
+  weights = 1.0
+  if weighted_batch:
+      weights = tf.concat( [tf.ones(100.0)*(1/200.0), tf.ones([tf.shape(input_layer)[0] - 100])*(tf.ones(1) / tf.cast((2 * (tf.shape(input_layer)[0] - 100)), tf.float32))] , axis=0)* \
+                tf.cast(tf.shape(input_layer)[0], tf.float32)
+
+  #This avarage the loss.
   loss = tf.losses.softmax_cross_entropy(
-    onehot_labels=onehot_labels, logits=logits)
+    onehot_labels=onehot_labels, logits=logits, weights=weights)
 
   correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(onehot_labels, 1))
   accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
@@ -67,44 +74,45 @@ def cnn_model_fn(features, labels, enable_dropout):
 from sacred import Experiment
 from sacred.stflow import LogFileWriter
 
-ex = Experiment('minst_seboost')
+ex = Experiment('minst_sgd_adjust')
 from sacred.observers import MongoObserver
-ex.observers.append(MongoObserver.create(db_name='minst_seboost_db'))
+ex.observers.append(MongoObserver.create(db_name='mnist'))
+
 
 @ex.config
 def my_config():
-    lr = 0.1
+
+    lr = 0.001
+    batch_size = 400
     n_epochs = 100
-    batch_size = 100
-    history_size = 10
+
+    iters_to_wait_before_first_collect = 0
+    #iters_per_adjust = 55000
+    iters_per_adjust = (55000/batch_size)/2
+    #iters_per_adjust = 50
+    #iters_per_adjust = 1
+    per_variable = False
+    base_optimizer = 'SGD'
+
+    #for adam
+    beta1 = 0.9
+    beta2 = 0.999
+
+    #for Adadelta
+    rho = 0.95
+
+    weighted_batch=False
     tensorboard_dir = tf_utils.allocate_tensorboard_dir()
-
-
-    VECTOR_BREAKING = False
-    adaptable_learning_rate = True
-    num_of_batches_per_sesop = 10
-    sesop_private_dataset = False
-    disable_dropout_during_sesop = True
-    #sesop_method = 'CG'
-    sesop_method = 'natural_gradient'
-    sesop_options = {'maxiter': 200, 'gtol': 1e-3}
-    seboost_base_method = 'SGD'
-
-    normalize_function_during_sesop = True
-
 
 @ex.automain
 @LogFileWriter(ex)
-def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size,
-            num_of_batches_per_sesop, sesop_private_dataset, n_epochs, disable_dropout_during_sesop,
-            sesop_method, sesop_options, seboost_base_method, normalize_function_during_sesop,
-            tensorboard_dir):
+def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, iters_to_wait_before_first_collect, base_optimizer, beta1, beta2, rho, weighted_batch, tensorboard_dir):
 
-    bp = MnistBatchProvider(batch_size, sesop_private_dataset)
+    bp = MnistBatchProvider(batch_size, False)
     x, y = bp.batch()
 
     enable_dropout = tf.Variable(True, trainable=False)
-    model = cnn_model_fn(x, y, enable_dropout)
+    model = cnn_model_fn(x, y, enable_dropout, weighted_batch)
 
     train_accuracy_summary = tf.summary.scalar('train_accuracy', model.accuracy, ['mnist_summary'])
     test_accuracy_summary = tf.summary.scalar('test_accuracy', model.accuracy, ['mnist_summary'])
@@ -116,25 +124,20 @@ def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_si
 
     set_dropout = [tf.assign(enable_dropout, False), tf.assign(enable_dropout, True)]
 
-    optimizer = SeboostOptimizer(model.loss, bp, tf.trainable_variables(), history_size=history_size,
-                                 VECTOR_BREAKING=VECTOR_BREAKING,
+    optimizer = SgdAdjustOptimizer(model.loss, bp, tf.trainable_variables(),
                                  lr=lr,
                                  batch_size=batch_size,
                                  train_dataset_size=bp.train_size(),
-                                 adaptable_learning_rate=adaptable_learning_rate,
-                                 num_of_batches_per_sesop=num_of_batches_per_sesop,
-                                 seboost_base_method=seboost_base_method,
-                                 sesop_method=sesop_method,
-                                 predictions=model.predictions,
-                                 normalize_function_during_sesop=normalize_function_during_sesop,
-                                 sesop_options=sesop_options)
+                                 iters_per_adjust=iters_per_adjust,
+                                 per_variable=per_variable,
+                                 iters_to_wait_before_first_collect=iters_to_wait_before_first_collect,
+                                 base_optimizer=base_optimizer,
+                                 beta1=beta1,
+                                 beta2=beta2,
+                                 rho=rho)
 
 
     with tf.Session() as sess:
-
-        #shutil.rmtree('/tmp/generated_data/1')
-
-
 
         writer = tf.summary.FileWriter(tensorboard_dir)
         writer.add_graph(sess.graph)
@@ -167,14 +170,7 @@ def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_si
             sess.run(set_dropout[1])
 
             #optimize
-            optimizer.run_epoch(sess)
-
-            if disable_dropout_during_sesop == True:
-                sess.run(set_dropout[0])
-
-            optimizer.run_sesop(sess)
-
-            if disable_dropout_during_sesop == True:
-                sess.run(set_dropout[1])
-
+            for i in range(bp.train_size()/batch_size):
+                optimizer.run_iter(sess)
+            writer.flush()
             print '---------------'
