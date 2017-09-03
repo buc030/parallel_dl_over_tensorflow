@@ -23,10 +23,10 @@ def fc_layer(input, n_in, n_out, activation=True):
 
 
 def build_model(x, dim, out_dim, layers_num=4):
-    layers = [fc_layer(x, dim, 2*dim)]
+    layers = [fc_layer(x, dim, dim/2)]
     for i in range(layers_num):
-        layers.append(fc_layer(layers[-1], 2*dim, 2*dim))
-    layers.append(fc_layer(layers[-1], 2*dim, out_dim, False))
+        layers.append(fc_layer(layers[-1], dim/2, dim/2))
+    layers.append(fc_layer(layers[-1], dim/2, out_dim, False))
     model_out = layers[-1]
 
     return model_out

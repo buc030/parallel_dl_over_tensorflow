@@ -54,6 +54,8 @@ class ResNet(object):
 
     self._extra_train_ops = []
 
+
+
   def build_graph(self):
     """Build a whole graph for the model."""
     self.global_step = tf.contrib.framework.get_or_create_global_step()
@@ -68,6 +70,7 @@ class ResNet(object):
 
   def _build_model(self):
     """Build the core model within the graph."""
+    tf.set_random_seed(569256)
     with tf.variable_scope('init'):
       x = self._images
       x = self._conv('init_conv', x, 3, 3, 16, self._stride_arr(1))

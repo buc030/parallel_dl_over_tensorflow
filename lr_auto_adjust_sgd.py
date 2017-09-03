@@ -71,10 +71,10 @@ class SgdAdjustOptimizer:
 
 
         with tf.name_scope('snapshot_curr'):
-            self.snapshot_curr = {var : tf.Variable(np.zeros(var.get_shape()), dtype=var.dtype.base_dtype) for var in var_list }
+            self.snapshot_curr = {var : tf.Variable(np.zeros(var.get_shape()), dtype=var.dtype.base_dtype, trainable=False) for var in var_list }
 
         with tf.name_scope('snapshot_prev'):
-            self.snapshot_prev = {var : tf.Variable(np.zeros(var.get_shape()), dtype=var.dtype.base_dtype) for var in var_list }
+            self.snapshot_prev = {var : tf.Variable(np.zeros(var.get_shape()), dtype=var.dtype.base_dtype, trainable=False) for var in var_list }
 
         self.lr_update_multiplier
 
@@ -157,6 +157,11 @@ class SgdAdjustOptimizer:
         #lrs[0] is lr_n
         #lrs[1] is lr_(n-1)
         # lrs[2] is lr_(n-2)
+
+        self.lr_update_multiplier
+        self.shift_snapshots
+        self.take_snapshot_curr
+
 
 
     def get_actual_curr_lr(self):

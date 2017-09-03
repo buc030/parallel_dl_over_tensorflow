@@ -76,24 +76,25 @@ from sacred.stflow import LogFileWriter
 
 ex = Experiment('minst_sgd_adjust')
 from sacred.observers import MongoObserver
-ex.observers.append(MongoObserver.create(db_name='mnist'))
+ex.observers.append(MongoObserver.create(db_name='minst_sgd_adjust_db'))
 
 
 @ex.config
 def my_config():
 
     lr = 0.001
-    batch_size = 400
+    batch_size = 100
     n_epochs = 100
 
     iters_to_wait_before_first_collect = 0
-    #iters_per_adjust = 55000
-    iters_per_adjust = (55000/batch_size)/2
+    iters_per_adjust = 55000
+    #iters_per_adjust = (55000/batch_size)/2
     #iters_per_adjust = 50
     #iters_per_adjust = 1
     per_variable = False
     base_optimizer = 'SGD'
 
+    seed = 913526365
     #for adam
     beta1 = 0.9
     beta2 = 0.999
@@ -101,14 +102,15 @@ def my_config():
     #for Adadelta
     rho = 0.95
 
-    weighted_batch=False
+    weighted_batch = False
     tensorboard_dir = tf_utils.allocate_tensorboard_dir()
 
 @ex.automain
 @LogFileWriter(ex)
-def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, iters_to_wait_before_first_collect, base_optimizer, beta1, beta2, rho, weighted_batch, tensorboard_dir):
+def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, iters_to_wait_before_first_collect,
+				base_optimizer, beta1, beta2, rho, weighted_batch, tensorboard_dir, seed):
 
-    bp = MnistBatchProvider(batch_size, False)
+    bp = MnistBatchProvider(batch_size, False, seed)
     x, y = bp.batch()
 
     enable_dropout = tf.Variable(True, trainable=False)

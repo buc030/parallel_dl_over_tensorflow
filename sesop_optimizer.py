@@ -16,45 +16,67 @@ class SubspaceOptimizer:
 
     def create_history(self, var):
         #return tf.stack([tf.Variable(np.zeros(var.get_shape()), dtype=var.dtype.base_dtype) for i in range(self.history_size)], axis=len(var.get_shape()))
-        return [tf.Variable(np.zeros(var.get_shape()), dtype=var.dtype.base_dtype) for i in range(self.history_size)]
+        return [tf.Variable(np.zeros(var.get_shape()), dtype=var.dtype.base_dtype, trainable=False) for i in range(self.history_size)]
 
     def var_out(self, var):
-        #assume vector_breaking == True
-        #then every variable, should use its own alpha
-        #We need to somehow bound how much alpha can affect the weights. So we normalize the alphas
 
-        #normalizer = tf.sigmoid(self.h_alphas[var])
-        #just a soft limit to not let any individual weight explode
-        # limit = 2.0
-        # normalized_alpha = self.h_alphas[var]
-        # normalized_alpha = tf.maximum(tf.minimum(normalized_alpha, limit), -limit)
+        with tf.name_scope(var.name.split(':')[0] + '_transformed'):
+            out = var
 
-        #TODO: maybe the limit can be removed
-        limit = 2.0 #/len(self.alphas_uniqe)
-        #normalized_alpha = self.h_alphas[var] / len(self.alphas_uniqe)
-        #self.sgd_distance_moved
+            if self.history_size > 0:
+                if self.optimizer_kwargs['normalize_history_dirs']:
+                    history_dirs_norms = [tf.global_norm([self.history[_var][idx] for _var in self.orig_var_list]) for idx in range(self.history_size)]
+                    history_dirs = tf.stack([h/(norm + self.eps) for h, norm in zip(self.history[var], history_dirs_norms)], axis=len(var.get_shape()))
+                else:
+                    history_dirs = tf.stack([h for h in self.history[var]], axis=len(var.get_shape()))
 
-        #normalized_alpha = (self.h_alphas[var]*self.alpha_weights)/float(self.history_size)
-        #distance_sgd_moved = tf.norm(var - self.last_snapshot[var])
-        # normalized_alpha = self.h_alphas[var]/distance_sgd_moved
-        normalized_alpha = self.h_alphas[var]
-        # normalized_alpha = normalized_alpha / (tf.global_norm([a + self.eps for a in self.alphas_uniqe]))
-        # normalized_alpha = tf.maximum(tf.minimum(normalized_alpha, limit), -limit)
-        #
+                out += tf.reduce_sum(history_dirs * self.h_alphas[var], axis=len(var.get_shape()))
 
-        out = var + tf.reduce_sum(tf.stack(self.history[var], axis=len(var.get_shape()))*normalized_alpha, axis=len(var.get_shape()))
-        #return (out/tf.norm(out))*tf.norm(var)
-        return out
+            if len(self.anchors[var]) > 0:
+                anchors_dirs_norms = [tf.global_norm([_var - self.anchors[_var][anchor_idx] for _var in self.anchors.keys()]) for anchor_idx in range(self.anchor_size)]
+                anchors_dirs = tf.stack([(var - anch)/(norm + self.eps) for anch, norm in zip(self.anchors[var], anchors_dirs_norms)], axis=len(var.get_shape()))
+
+                out += tf.reduce_sum(anchors_dirs * self.anchor_alphas[var], axis=len(var.get_shape()))
+
+            if self.optimizer_kwargs['use_grad_dir']:
+                out += self.grad_alpha * self.vars_grad[var]
+
+                # temp = tf.Variable(np.zeros(var.get_shape()), dtype=var.dtype.base_dtype, trainable=False)
+                # with tf.control_dependencies([tf.assign(temp, var)]):
+                #
+                #     out += (var - temp) * self.vars_grad[var]
+
+            if self.optimizer_kwargs['normalize_subspace']:
+                return (out/tf.norm(out))*tf.norm(var)
+            else:
+                return out
+
 
     def build_subspace_graph(self, loss, predictions):
 
         replacement_ts = {var._snapshot : self.var_out(var) for var in self.orig_var_list}
-        #replacement_ts = {var._variable: self.var_out(var) for var in self.orig_var_list}
+
+        self.var_2_transofrm_op = {v : t for v, t in replacement_ts.items()}
 
         if predictions is not None:
-            return tf.contrib.graph_editor.graph_replace([loss, predictions], replacement_ts)
+            new_loss, new_predictions = tf.contrib.graph_editor.graph_replace([loss, predictions], replacement_ts)
         else:
-            return tf.contrib.graph_editor.graph_replace([loss], replacement_ts)
+            new_loss, = tf.contrib.graph_editor.graph_replace([loss], replacement_ts)
+
+        try:
+            self.weight_decay = self.optimizer_kwargs['weight_decay']
+            costs = []
+            # SV ARTICLE
+            for var, t in self.var_2_transofrm_op.items():
+                if not (var.op.name.find(r'bias') > 0):
+                    costs.append(tf.nn.l2_loss(t))
+
+            #TODO: make sure its same scale.
+            new_loss += (tf.add_n(costs) * self.weight_decay)
+        except KeyError:
+            assert (False)
+
+        return new_loss, None
         #tf.contrib.graph_editor.graph_replace(target_ts, replacement_ts, dst_scope='', src_scope='',
         #                                      reuse_dst_scope=False)
 
@@ -89,15 +111,25 @@ class SubspaceOptimizer:
             return self.store_history_ops[h_index]
 
         ops = []
-        history_norm = 1.0
-        #SV DEBUG
-        #SV TODO: the natural gradient experiments that worked used history_norm = 1.0!
-        #history_norm = tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
         for var in self.orig_var_list:
-            ops.append(tf.assign(self.history[var][h_index], (var - self.last_snapshot[var])/history_norm))
+            ops.append(tf.assign(self.history[var][h_index], var - self.last_snapshot[var]))
 
         self.store_history_ops[h_index] = ops
         return ops
+
+    # 1.1. add anchor
+    def store_anchor(self, index):
+        if index in self.store_anchor_ops:
+            return self.store_anchor_ops[index]
+
+        ops = []
+        # norm = tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
+        for var in self.orig_var_list:
+            ops.append(tf.assign(self.history[var][index], var))
+
+        self.store_anchor_ops[index] = ops
+        return ops
+
 
     #2. minimize by alpha
 
@@ -130,14 +162,28 @@ class SubspaceOptimizer:
         return ops
 
     def __init__(self, loss, var_list, history_size, **optimizer_kwargs):
-        self.eps = 1e-6
+        self.eps = 1e-10
         self.history_size = history_size
+        self.anchor_size = optimizer_kwargs['anchor_size']
+        self.anchor_offsets = optimizer_kwargs['anchor_offsets']
+        if self.anchor_size == 0:
+            self.anchor_offsets = []
+
+        if optimizer_kwargs['use_grad_dir']:
+            with tf.name_scope('grad_alpha'):
+                self.grad_alpha = tf.Variable(np.zeros(1), dtype=var_list[0].dtype.base_dtype, trainable=False)
+            with tf.name_scope('grad_by_var'):
+                vars_grad = tf.gradients(loss, var_list)
+            self.vars_grad = {v : g for v,g in zip(var_list, vars_grad)}
+
         self.orig_var_list = var_list
         self.orig_loss = loss
         self.store_history_ops = {}
+        self.store_anchor_ops = {}
         self.update_alpha_weights_ops = {}
         self.optimizer_kwargs = optimizer_kwargs
         self.next_free_h_index = 0
+        self.next_free_anchor_index = 0
         self.total_iter = 0
 
         vector_breaking = optimizer_kwargs['VECTOR_BREAKING']
@@ -146,63 +192,91 @@ class SubspaceOptimizer:
         predictions = optimizer_kwargs['predictions']
         self.normalize_function_during_sesop = optimizer_kwargs['normalize_function_during_sesop']
 
+        self.history_decay_rate = optimizer_kwargs['history_decay_rate']
+
         assert (vector_breaking == True or vector_breaking == False)
 
 
         with tf.name_scope('last_snapshot'):
-            #TODO: does this is created in wrong graph??
-            self.last_snapshot = {var : tf.Variable(var.initialized_value(), dtype=var.dtype.base_dtype) for var in var_list}
+            self.last_snapshot = {var : tf.Variable(var.initialized_value(), dtype=var.dtype.base_dtype, trainable=False) for var in var_list}
 
         with tf.name_scope('history'):
             self.history = {var : self.create_history(var) for var in var_list}
 
-        with tf.name_scope('alphas'):
+        with tf.name_scope('anchors'):
+            self.anchors = {var : [tf.Variable(var.initialized_value(), dtype=var.dtype.base_dtype, trainable=False) for i in range(self.anchor_size)] for var in var_list}
+
+        with tf.name_scope('anchor_alphas'):
+            anchor_alphas = tf.Variable(np.zeros(self.anchor_size), dtype=var_list[0].dtype.base_dtype, trainable=False)
+            self.anchor_alphas = {var: anchor_alphas for var in var_list}
+
+        with tf.name_scope('h_alphas'):
             if vector_breaking == True:
-                self.h_alphas = {var: tf.Variable(np.zeros(history_size), dtype=var.dtype.base_dtype) for var in var_list}
+                self.h_alphas = {var: tf.Variable(np.zeros(history_size), dtype=var.dtype.base_dtype, trainable=False) for var in var_list}
             else:
-                h_alphas = tf.Variable(np.zeros(history_size), dtype=var_list[0].dtype.base_dtype)
+                h_alphas = tf.Variable(np.zeros(history_size), dtype=var_list[0].dtype.base_dtype, trainable=False)
                 self.h_alphas = {var: h_alphas for var in var_list}
-        self.alphas_uniqe = list(set(self.h_alphas.values()))
-        self.alpha_weights = tf.Variable(np.zeros(history_size), dtype=var_list[0].dtype.base_dtype, trainable=False)
-        self.sgd_distance_moved = tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
+
+
+        if self.optimizer_kwargs['use_grad_dir']:
+            self.alphas_uniqe = list(set(self.h_alphas.values() + self.anchor_alphas.values() + [self.grad_alpha]))
+        else:
+            self.alphas_uniqe = list(set(self.h_alphas.values() + self.anchor_alphas.values()))
+
+        with tf.name_scope('alpha_weights'):
+            self.alpha_weights = tf.Variable(np.zeros(history_size), dtype=var_list[0].dtype.base_dtype, trainable=False)
+
 
         with tf.name_scope('sesop_computation_graph'):
             self.new_loss, self.new_predictions = self.build_subspace_graph(loss, predictions)
 
 
-
-        self.alpha_grad = tf.gradients(self.new_loss, self.alphas_uniqe)
+        with tf.name_scope('grad_by_alpha'):
+            self.alpha_grad = tf.gradients(self.new_loss, self.alphas_uniqe)
         self.alpha_grad_norm = tf.global_norm(self.alpha_grad)
         self.grad_norm_placeholder = tf.placeholder(dtype=self.orig_var_list[0].dtype.base_dtype)
 
         # self.vars_norm = tf.global_norm([var for var in self.orig_var_list])
         # self.var_outs_norm = tf.global_norm([self.var_out(var) for var in self.orig_var_list])
 
-        if sesop_method == 'natural_gradient':
-            self.optimizer = NaturalGradientOptimizer(self.new_loss/self.grad_norm_placeholder, self.new_predictions, self.alphas_uniqe, sesop_options)
-        else:
-            self.optimizer = \
-                    ScipyOptimizerInterface(loss=self.new_loss/self.grad_norm_placeholder, var_list=self.alphas_uniqe, \
-                                equalities=None ,method=sesop_method, options=sesop_options)
+        with tf.name_scope('ScipyOptimizer'):
+            if sesop_method == 'natural_gradient':
+                self.optimizer = NaturalGradientOptimizer(self.new_loss/self.grad_norm_placeholder, self.new_predictions, self.alphas_uniqe, sesop_options)
+            else:
+                self.optimizer = \
+                        ScipyOptimizerInterface(loss=self.new_loss/self.grad_norm_placeholder, var_list=self.alphas_uniqe, \
+                                    equalities=None ,method=sesop_method, options=sesop_options)
 
-        [self.store_history(h) for h in range(self.history_size)]
-        [self.update_alpha_weights(h) for h in range(self.history_size)]
-        [self.fix_history_after_sesop(h) for h in range(self.history_size)]
-        self.move_results_to_original
-        self.zero_alphas
-        self.take_snapshot
+        with tf.name_scope('aux_ops'):
+            [self.store_history(h) for h in range(self.history_size)]
+            [self.update_alpha_weights(h) for h in range(self.history_size)]
+            [self.fix_history_after_sesop(h) for h in range(self.history_size)]
+            self.move_results_to_original
+            self.zero_alphas
+            self.take_snapshot
 
         with tf.name_scope('after_sesop'):
+            tf.summary.scalar('before_sesop_minibatch_loss', self.orig_loss, [SubspaceOptimizer.SUMMARY_BEFORE_ITERATION_KEY])
+
             tf.summary.scalar('after_sesop_minibatch_loss_normalized', self.new_loss/self.grad_norm_placeholder, [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
             tf.summary.scalar('after_sesop_minibatch_loss', self.orig_loss, [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
             #for h in range(history_size):
             #    tf.summary.scalar('new_vector_in_history_norm_' + str(h), tf.global_norm([self.history[var][h] for var in self.orig_var_list]), [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
             self.sesop_grad_computations = tf.placeholder(tf.int32)
             self.sesop_grad_computations_summary = tf.summary.scalar('sesop_grad_computations', self.sesop_grad_computations, [SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY])
-            self.alpha_summary_histogram = tf.summary.histogram('alpha', tf.stack(self.alphas_uniqe), ['alpha_summary_histogram'])
+            #self.alpha_summary_histogram = tf.summary.histogram('alpha', tf.stack(self.alphas_uniqe), ['alpha_summary_histogram'])
 
+            #SV DEBUG
             self.distance_seboost_moved = tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
             self.distance_sesop_moved = tf.global_norm([self.var_out(var) - var for var in self.orig_var_list])
+            self.sgd_distance_moved = tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
+
+            self.distance_seboost_moved_per_var = [tf.abs(var - self.last_snapshot[var]) for var in self.orig_var_list]
+            self.distance_sesop_moved_per_var = [tf.abs(self.var_out(var) - var) for var in self.orig_var_list]
+            self.sgd_distance_moved_per_var = [tf.abs(var - self.last_snapshot[var]) for var in self.orig_var_list]
+
+            self.sgd_sesop_dot_product_per_var = [(var - self.last_snapshot[var]) * (self.var_out(var) - var) for var in self.orig_var_list]
+
 
             self.distance_seboost_moved_summary = tf.summary.scalar('distance_seboost_moved', self.distance_seboost_moved, ['distance_seboost_moved'])
             self.distance_sesop_moved_summary = tf.summary.scalar('distance_sesop_moved', self.distance_sesop_moved, ['distance_sesop_moved'])
@@ -214,16 +288,27 @@ class SubspaceOptimizer:
             self.sgd_sesop_dot_product = tf.add_n([tf.reduce_sum((var - self.last_snapshot[var])*(self.var_out(var) - var)) for var in self.orig_var_list])
             self.sgd_sesop_dot_product_summary = tf.summary.scalar('sgd_sesop_dot_product', self.sgd_sesop_dot_product, ['sgd_sesop_dot_product'])
 
-        with tf.name_scope('alpha_after_sesop'):
-            self.alpha_summary = []
-            for i in range(history_size):
-                self.alpha_summary.extend([tf.summary.scalar('a', a[i], ['a']) for a in self.alphas_uniqe])
+            with tf.name_scope('h_alpha'):
+                self.alpha_summary = []
+                alphas = list(set(self.h_alphas.values()))
+                for i in range(history_size):
+                    self.alpha_summary.extend([tf.summary.scalar('a', a[i], ['a']) for a in alphas])
+
+            with tf.name_scope('anchor_alpha'):
+                alphas = list(set(self.anchor_alphas.values()))
+                for i in range(self.anchor_size):
+                    self.alpha_summary.extend([tf.summary.scalar('a', a[i], ['a']) for a in alphas])
+
+            if self.optimizer_kwargs['use_grad_dir']:
+                self.alpha_summary.append(tf.summary.scalar('grad_alpha', self.grad_alpha[0], ['a']))
+
             self.alpha_summary = tf.summary.merge(self.alpha_summary)
 
         with tf.name_scope('during_sesop'):
             tf.summary.scalar('grad_norm_during_sesop', tf.norm(self.optimizer.get_packed_loss_grad()), [SubspaceOptimizer.SUMMARY_IN_ITERATION_KEY])
             tf.summary.scalar('loss_during_sesop', self.new_loss, [SubspaceOptimizer.SUMMARY_IN_ITERATION_KEY])
 
+        self.summaries_before_iter = tf.summary.merge_all(SubspaceOptimizer.SUMMARY_BEFORE_ITERATION_KEY)
         self.summaries_after_iter = tf.summary.merge_all(SubspaceOptimizer.SUMMARY_AFTER_ITERATION_KEY)
         self.summaries_in_iter = tf.summary.merge_all(SubspaceOptimizer.SUMMARY_IN_ITERATION_KEY)
 
@@ -238,29 +323,49 @@ class SubspaceOptimizer:
 
     #return _sgd_distance_moved, _distance_sesop_moved, _distance_seboost_moved
     def minimize(self, session=None, feed_dicts=None, fetches=None, override_loss_grad_func=None, additional_feed_dict=None):
+        self.total_iter += 1
+
         if additional_feed_dict is None:
             additional_feed_dict = {}
 
-        print 'history_candicate_norm = ' + str(session.run(self.history_candicate_norm))
+        _history_candicate_norm = session.run(self.history_candicate_norm)
+        print 'history_candicate_norm = ' + str(_history_candicate_norm)
 
-        _sgd_distance_moved = session.run(self.sgd_distance_moved)
+        if self.optimizer_kwargs['per_variable']:
+            _sgd_distance_moved = session.run(self.sgd_distance_moved_per_var)
+        else:
+            _sgd_distance_moved = session.run(self.sgd_distance_moved)
+
+        # 0. add take anchor
+        if (self.total_iter - 1) in self.anchor_offsets:
+            print 'Taking anchor'
+            session.run(self.store_anchor(self.next_free_anchor_index))
+            self.next_free_anchor_index = (self.next_free_anchor_index + 1) % self.anchor_size
+
+        if _history_candicate_norm < self.eps and self.anchor_size == 0 and self.optimizer_kwargs['use_grad_dir'] == False:
+            self.i_after_iter += 1
+            return _sgd_distance_moved, 0.0, _sgd_distance_moved, 0.0
+
         # 0. add current history
-        session.run(self.store_history(self.next_free_h_index) + self.update_alpha_weights(self.next_free_h_index))
-        self.total_iter += 1
+        if self.history_size > 0 and _history_candicate_norm >= self.eps:
+            session.run(self.store_history(self.next_free_h_index) + self.update_alpha_weights(self.next_free_h_index))
 
         # 1. calculate grad norm to normalize function:
-        _alpha_grad_norm = 1.0
-        if self.normalize_function_during_sesop:
-            _alpha_grad_norm = session.run(self.alpha_grad_norm)
+        _alpha_grad_norm = session.run(self.alpha_grad_norm)
 
-        additional_feed_dict.update({self.grad_norm_placeholder: _alpha_grad_norm})
+        if self.normalize_function_during_sesop:
+            additional_feed_dict.update({self.grad_norm_placeholder: _alpha_grad_norm})
+        else:
+            additional_feed_dict.update({self.grad_norm_placeholder: 1.0})
 
         print '_alpha_grad_norm = ' + str(_alpha_grad_norm)
-        if _alpha_grad_norm < self.eps: # or self.total_iter < self.history_size:
+        if _alpha_grad_norm < self.eps:
             if _alpha_grad_norm < self.eps:
                 print 'alpha grad norm is zero. In local minima with respect to alpha!'
             session.run(self.take_snapshot)
-            self.next_free_h_index = (self.next_free_h_index + 1) % self.history_size
+
+            if self.history_size > 0 and _history_candicate_norm >= self.eps:
+                self.next_free_h_index = (self.next_free_h_index + 1) % self.history_size
 
             #self.i_in_iter += 10
             self.writer.add_summary(session.run(self.sesop_grad_computations_summary, {self.sesop_grad_computations : 0}), self.i_after_iter)
@@ -283,13 +388,17 @@ class SubspaceOptimizer:
             self._sesop_grad_computations += 1
 
 
+        self.writer.add_summary(session.run(self.summaries_before_iter, {self.orig_loss : avarge_on_feed_dicts(session, [self.orig_loss], feed_dicts)[0]}), self.i_after_iter)
+
+        #SV DEBUG
+        session.run(tf.assign(self.grad_alpha, [0.1]))
         #2 minimize by alpha
         self.optimizer.minimize(session, feed_dicts=feed_dicts, fetches=fetches, step_callback=None,
                                 loss_callback=debug_loss_callback, override_loss_grad_func=override_loss_grad_func, additional_feed_dict=additional_feed_dict)
 
         additional_feed_dict.update({self.sesop_grad_computations: self._sesop_grad_computations})
 
-        self.writer.add_summary(session.run(self.alpha_summary_histogram), self.i_after_iter)
+        #self.writer.add_summary(session.run(self.alpha_summary_histogram), self.i_after_iter)
         self.writer.add_summary(session.run(self.alpha_summary), self.i_after_iter)
 
 
@@ -305,12 +414,15 @@ class SubspaceOptimizer:
 
 
         #tf.global_norm([self.var_out(var) - var for var in self.orig_var_list])
-        _distance_sesop_moved = session.run(self.distance_sesop_moved)
-        #TODO: save perf
-        _sgd_sesop_dot_product = session.run(self.sgd_sesop_dot_product)
-        #TODO: remove additional_feed_dict
-        self.writer.add_summary(session.run(self.distance_sesop_moved_summary, additional_feed_dict), self.i_after_iter)
-        self.writer.add_summary(session.run(self.sgd_sesop_dot_product_summary, additional_feed_dict), self.i_after_iter)
+        if self.optimizer_kwargs['per_variable']:
+            _distance_sesop_moved = session.run(self.distance_sesop_moved_per_var)
+            _sgd_sesop_dot_product = session.run(self.sgd_sesop_dot_product_per_var)
+        else:
+            _distance_sesop_moved = session.run(self.distance_sesop_moved)
+            _sgd_sesop_dot_product = session.run(self.sgd_sesop_dot_product)
+
+        self.writer.add_summary(session.run(self.distance_sesop_moved_summary), self.i_after_iter)
+        self.writer.add_summary(session.run(self.sgd_sesop_dot_product_summary), self.i_after_iter)
 
 
         #3. move results into original variables:
@@ -320,12 +432,17 @@ class SubspaceOptimizer:
 
         #this is how much sesop + sgd moved
         #tf.global_norm([var - self.last_snapshot[var] for var in self.orig_var_list])
-        _distance_seboost_moved = session.run(self.distance_seboost_moved)
+        if self.optimizer_kwargs['per_variable']:
+            _distance_seboost_moved = session.run(self.distance_seboost_moved_per_var)
+        else:
+            _distance_seboost_moved = session.run(self.distance_seboost_moved)
+
         self.writer.add_summary(session.run(self.distance_seboost_moved_summary, additional_feed_dict), self.i_after_iter)
 
 
         #4. Fix the history:
-        session.run(self.fix_history_after_sesop(self.next_free_h_index))
+        if self.history_size > 0:
+            session.run(self.fix_history_after_sesop(self.next_free_h_index))
 
         print 'loss after fix_history_after_sesop = ' + str(avarge_on_feed_dicts(session, [self.orig_loss], feed_dicts))
 
@@ -339,10 +456,13 @@ class SubspaceOptimizer:
         additional_feed_dict.update({self.orig_loss : avarge_on_feed_dicts(session, [self.orig_loss], feed_dicts)[0]})
         additional_feed_dict.update({self.new_loss: avarge_on_feed_dicts(session, [self.new_loss], feed_dicts)[0]})
 
+
         self.writer.add_summary(session.run(self.summaries_after_iter, additional_feed_dict), self.i_after_iter)
         self.i_after_iter += 1
 
-        self.next_free_h_index = (self.next_free_h_index + 1) % self.history_size
+        if self.history_size > 0:
+            self.next_free_h_index = (self.next_free_h_index + 1) % self.history_size
+
 
         print '_distance_seboost_moved = ' + str(_distance_seboost_moved)
         print '_distance_sesop_moved = ' + str(_distance_sesop_moved)

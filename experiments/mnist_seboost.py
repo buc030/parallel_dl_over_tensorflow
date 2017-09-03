@@ -15,7 +15,7 @@ from tf_utils import avarge_on_feed_dicts, avarge_n_calls
 
 Model = collections.namedtuple('Model', ['loss', 'accuracy', 'predictions'])
 
-def cnn_model_fn(features, labels, enable_dropout):
+def cnn_model_fn(features, labels, enable_dropout, weight_decay):
   """Model function for CNN."""
   # Input Layer
   labels = tf.reshape(labels, [-1])
@@ -56,6 +56,13 @@ def cnn_model_fn(features, labels, enable_dropout):
   loss = tf.losses.softmax_cross_entropy(
     onehot_labels=onehot_labels, logits=logits)
 
+  costs = []
+  for var in tf.trainable_variables():
+      if not (var.op.name.find(r'bias') > 0):
+          costs.append(tf.nn.l2_loss(var))
+
+  loss += tf.multiply(weight_decay, tf.add_n(costs))
+
   correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(onehot_labels, 1))
   accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
@@ -81,30 +88,41 @@ def my_config():
 
 
     VECTOR_BREAKING = False
-    adaptable_learning_rate = True
+    adaptable_learning_rate = False
     num_of_batches_per_sesop = 10
     sesop_private_dataset = False
     disable_dropout_during_sesop = True
-    #sesop_method = 'CG'
-    sesop_method = 'natural_gradient'
-    sesop_options = {'maxiter': 200, 'gtol': 1e-3}
+    disable_dropout_at_all = True
+    disable_sesop_at_all = False
+
+    if disable_sesop_at_all:
+        sesop_private_dataset = False
+
+    sesop_method = 'CG'
+    #sesop_method = 'natural_gradient'
+    sesop_options = {'maxiter': 200, 'gtol': 1e-6}
     seboost_base_method = 'SGD'
 
     normalize_function_during_sesop = True
 
+    weight_decay = 0.0000
+
+    history_decay_rate = 1.0
+
+    seed = 913526365
 
 @ex.automain
 @LogFileWriter(ex)
-def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size,
+def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size,
             num_of_batches_per_sesop, sesop_private_dataset, n_epochs, disable_dropout_during_sesop,
-            sesop_method, sesop_options, seboost_base_method, normalize_function_during_sesop,
+            sesop_method, sesop_options, seboost_base_method, normalize_function_during_sesop, disable_dropout_at_all, disable_sesop_at_all, history_decay_rate,
             tensorboard_dir):
 
     bp = MnistBatchProvider(batch_size, sesop_private_dataset)
     x, y = bp.batch()
 
     enable_dropout = tf.Variable(True, trainable=False)
-    model = cnn_model_fn(x, y, enable_dropout)
+    model = cnn_model_fn(x, y, enable_dropout, weight_decay)
 
     train_accuracy_summary = tf.summary.scalar('train_accuracy', model.accuracy, ['mnist_summary'])
     test_accuracy_summary = tf.summary.scalar('test_accuracy', model.accuracy, ['mnist_summary'])
@@ -123,7 +141,9 @@ def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_si
                                  train_dataset_size=bp.train_size(),
                                  adaptable_learning_rate=adaptable_learning_rate,
                                  num_of_batches_per_sesop=num_of_batches_per_sesop,
+                                 sesop_private_dataset=sesop_private_dataset,
                                  seboost_base_method=seboost_base_method,
+                                 history_decay_rate=history_decay_rate,
                                  sesop_method=sesop_method,
                                  predictions=model.predictions,
                                  normalize_function_during_sesop=normalize_function_during_sesop,
@@ -167,14 +187,20 @@ def my_main(lr, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_si
             sess.run(set_dropout[1])
 
             #optimize
+            if disable_dropout_at_all == True:
+                sess.run(set_dropout[0])
+
             optimizer.run_epoch(sess)
 
             if disable_dropout_during_sesop == True:
                 sess.run(set_dropout[0])
 
-            optimizer.run_sesop(sess)
+            if disable_sesop_at_all == True:
+                optimizer.iter += 1
+            else:
+                optimizer.run_sesop(sess)
 
             if disable_dropout_during_sesop == True:
                 sess.run(set_dropout[1])
-
+            writer.flush()
             print '---------------'

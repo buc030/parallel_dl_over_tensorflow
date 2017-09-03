@@ -1,6 +1,7 @@
 
 import tensorflow as tf
 import progressbar
+from numpy.random import RandomState
 from progressbar import ProgressBar, Percentage, Bar, ETA
 from time import sleep
 
@@ -10,13 +11,19 @@ import numpy as np
 import sys
 import shutil
 import functools
+import os
 
 def allocate_tensorboard_dir():
     BASE_DIR = '/home/shai/tensorflow/generated_data'
     used = [int(x) for x in shutil.os.listdir(BASE_DIR)]
     if len(used) == 0:
         return BASE_DIR + '/' + str(1)
-    return BASE_DIR + '/' + str(max(used) + 1)
+
+    path = BASE_DIR + '/' + str(max(used) + 1)
+    if not os.path.exists(path):
+        os.mkdir(path)
+
+    return path
 
 
 def lazy_property(function):
@@ -73,7 +80,12 @@ def avarge_n_calls(sess, target_op, n):
 
     return res[0]/float(n)
 
+def sum_n_calls(sess, target_op, n):
+    res = np.zeros(1)
+    for chunk in range(n):
+        res += sess.run(target_op)
 
+    return res[0]
 
 
 #returns an op that concat op_func() n times
@@ -144,7 +156,16 @@ class CustomRunner(object):
         images_batch, labels_batch = self.curr_queue.dequeue_many(self.batch_size_tf_var)
         return images_batch, labels_batch
 
-    def __init__(self, train_features, train_labels, test_features, test_labels, batch_size, sesop_part_size):
+    def __init__(self, train_features, train_labels, test_features, test_labels, batch_size, sesop_part_size, seed):
+
+        self.seed = seed
+
+        perm = np.arange(train_features.shape[0])
+        np.random.shuffle(perm)
+        train_features = train_features[perm]
+        train_labels = train_labels[perm]
+
+
         self.train_features = train_features[sesop_part_size:]
         self.train_labels = train_labels[sesop_part_size:]
 
@@ -219,13 +240,13 @@ class CustomRunner(object):
 
         #self.train_generator_lock = threading.Lock()
 
-    def sesop_train_data_iterator(self):
+    def sesop_train_data_iterator(self, rand_gen):
         """ A simple data iterator """
         batch_idx = 0
         while True:
             # shuffle labels and features
             idxs = np.arange(0, len(self.sesop_train_features))
-            np.random.shuffle(idxs)
+            rand_gen.shuffle(idxs)
             shuf_features = self.sesop_train_features[idxs]
             shuf_labels = self.sesop_train_labels[idxs]
             for batch_idx in range(0, len(self.sesop_train_features), self.batch_size):
@@ -235,13 +256,13 @@ class CustomRunner(object):
                 yield images_batch, labels_batch
 
 
-    def train_data_iterator(self):
+    def train_data_iterator(self, rand_gen):
         """ A simple data iterator """
         batch_idx = 0
         while True:
             # shuffle labels and features
             idxs = np.arange(0, len(self.train_features))
-            np.random.shuffle(idxs)
+            rand_gen.shuffle(idxs)
             shuf_features = self.train_features[idxs]
             shuf_labels = self.train_labels[idxs]
             for batch_idx in range(0, len(self.train_features), self.batch_size):
@@ -261,11 +282,13 @@ class CustomRunner(object):
                 yield images_batch, labels_batch
 
     def sesop_train_thread_main(self, sess):
-        for dataX, dataY in self.sesop_train_data_iterator():
+        sesop_thread_rand_gen = RandomState(self.seed)
+        for dataX, dataY in self.sesop_train_data_iterator(sesop_thread_rand_gen):
             sess.run(self.sesop_train_enqueue_op, feed_dict={self.sesop_train_dataX : dataX, self.sesop_train_dataY : dataY})
 
     def train_thread_main(self, sess):
-        for dataX, dataY in self.train_data_iterator():
+        train_thread_rand_gen = RandomState(self.seed)
+        for dataX, dataY in self.train_data_iterator(train_thread_rand_gen):
             sess.run(self.train_enqueue_op, feed_dict={self.train_dataX : dataX, self.train_dataY : dataY})
 
     def test_thread_main(self, sess):
