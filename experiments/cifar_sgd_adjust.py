@@ -19,7 +19,7 @@ from sacred.stflow import LogFileWriter
 
 ex = Experiment('cifar_sgd_adjust')
 from sacred.observers import MongoObserver
-ex.observers.append(MongoObserver.create(db_name='cifar_ten'))
+ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il', db_name='cifar_ten'))
 
 
 @ex.config
@@ -50,11 +50,16 @@ def my_config():
     #for Adadelta
     rho = 0.95
 
+    momentum = 0.9
+
+    break_lr_hand_tune = False
     tensorboard_dir = tf_utils.allocate_tensorboard_dir()
+
+    disable_lr_change=False
 
 @ex.automain
 @LogFileWriter(ex)
-def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, base_optimizer, beta1, beta2,
+def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, base_optimizer, beta1, beta2, break_lr_hand_tune, disable_lr_change,
             rho, num_residual_units, use_bottleneck, weight_decay_rate, relu_leakiness, state_of_the_art, tensorboard_dir):
 
     bp = CifarBatchProvider(batch_size, '/home/shai/tensorflow/parallel_sesop/')
@@ -69,7 +74,8 @@ def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, base_optim
                   weight_decay_rate=weight_decay_rate,
                   relu_leakiness=relu_leakiness,
                   state_of_the_art=state_of_the_art,
-                  optimizer=None)
+                  optimizer=None,
+                  input_chanels=3)
 
     model = ResNet(hps, x, y, 'train')
     model._build_model()
@@ -92,7 +98,14 @@ def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, base_optim
                                  base_optimizer=base_optimizer,
                                  beta1=beta1,
                                  beta2=beta2,
-                                 rho=rho)
+                                 rho=rho,
+                                 momentum=0.9,
+                                 update_every_two_snapshots=False,
+                                 reduce_lr_only=False,
+                                 lr_update_formula_risky=True,
+                                 iters_to_wait_before_first_collect=0,
+                                 step_size_anealing=False,
+                                 disable_lr_change=disable_lr_change)
 
 
     with tf.Session() as sess:
@@ -107,6 +120,7 @@ def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, base_optim
 
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(sess=sess, coord=coord)
+        train_step = 0
 
         for epoch in range(n_epochs):
             print 'epoch = ' + str(epoch)
@@ -128,4 +142,15 @@ def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, base_optim
             #optimize
             for i in range(50000/batch_size):
                 optimizer.run_iter(sess)
+                train_step += 1
+                if break_lr_hand_tune:
+                    if train_step < 40000:  # 1 epoch is 500 iterations. So this in epoch 80
+                        sess.run(optimizer.update_lr, {optimizer.lr_placeholder: 0.1})
+                    elif train_step < 60000:  # this in epoch 120
+                        sess.run(optimizer.update_lr, {optimizer.lr_placeholder: 0.01})
+                    elif train_step < 80000:  # this in epoch 160
+                        sess.run(optimizer.update_lr, {optimizer.lr_placeholder: 0.001})
+                    else:
+                        sess.run(optimizer.update_lr, {optimizer.lr_placeholder: 0.0001})
+
             print '---------------'

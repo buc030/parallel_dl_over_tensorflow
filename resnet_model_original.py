@@ -32,7 +32,7 @@ from tensorflow.python.training import moving_averages
 HParams = namedtuple('HParams',
                      'batch_size, num_classes, min_lrn_rate, lrn_rate, '
                      'num_residual_units, use_bottleneck, weight_decay_rate, '
-                     'relu_leakiness, state_of_the_art, optimizer')
+                     'relu_leakiness, state_of_the_art, optimizer, input_chanels')
 
 
 class ResNet(object):
@@ -73,7 +73,11 @@ class ResNet(object):
     tf.set_random_seed(569256)
     with tf.variable_scope('init'):
       x = self._images
-      x = self._conv('init_conv', x, 3, 3, 16, self._stride_arr(1))
+
+      #name, x, filter_size, in_filters, out_filters, strides
+
+      x = self._conv('init_conv', x, 3, self.hps.input_chanels, 16, self._stride_arr(1))
+      #x = self._conv('init_conv', x, 3, 3, 16, self._stride_arr(1))
 
     strides = [1, 2, 2]
     activate_before_residual = [True, False, False]
@@ -83,6 +87,7 @@ class ResNet(object):
     else:
       res_func = self._residual
       if self.hps.state_of_the_art == False:
+          #filters = [16, 64, 128, 256]
         filters = [16, 16, 32, 64]
       else:
         filters = [16, 160, 320, 640]

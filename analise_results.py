@@ -1,6 +1,7 @@
 
 import matplotlib
-matplotlib.use('qt5agg')
+#matplotlib.use('qt5agg')
+matplotlib.use('qt4agg')
 import matplotlib.pyplot as plt
 import experiment
 import experiment_results

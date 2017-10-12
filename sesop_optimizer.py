@@ -391,7 +391,8 @@ class SubspaceOptimizer:
         self.writer.add_summary(session.run(self.summaries_before_iter, {self.orig_loss : avarge_on_feed_dicts(session, [self.orig_loss], feed_dicts)[0]}), self.i_after_iter)
 
         #SV DEBUG
-        session.run(tf.assign(self.grad_alpha, [0.1]))
+        if self.optimizer_kwargs['use_grad_dir']:
+            session.run(tf.assign(self.grad_alpha, [0.1]))
         #2 minimize by alpha
         self.optimizer.minimize(session, feed_dicts=feed_dicts, fetches=fetches, step_callback=None,
                                 loss_callback=debug_loss_callback, override_loss_grad_func=override_loss_grad_func, additional_feed_dict=additional_feed_dict)

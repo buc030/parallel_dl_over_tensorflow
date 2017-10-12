@@ -81,9 +81,9 @@ from resnet_model_original import ResNet, HParams
 from sacred import Experiment
 from sacred.stflow import LogFileWriter
 
-ex = Experiment('minst_sgd_adjust')
+ex = Experiment('nike_experiment')
 from sacred.observers import MongoObserver
-ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il', db_name='minst_sgd_adjust_db'))
+ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il',db_name='nike_experiment_db'))
 
 
 @ex.config
@@ -115,24 +115,23 @@ def my_config():
     weighted_batch = False
     tensorboard_dir = tf_utils.allocate_tensorboard_dir()
     fashion_mnist = True
-    model = 'wide-resnet'
+    model = 'cnn'
     weight_decay = 0.0002
     momentum = 0.9
     step_size_anealing = False
-    disable_lr_change = False
-    update_every_two_snapshots=False
-    reduce_lr_only=False
+
+    mess_with_data_k = 10
 
 @ex.automain
 @LogFileWriter(ex)
 def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, iters_to_wait_before_first_collect, model, weight_decay,
-            lr_update_formula_risky, step_size_anealing, momentum, disable_lr_change, update_every_two_snapshots, reduce_lr_only,
+            lr_update_formula_risky, step_size_anealing, momentum, mess_with_data_k,
 				base_optimizer, beta1, beta2, rho, weighted_batch, tensorboard_dir, fashion_mnist, seed):
 
     if fashion_mnist == False:
-        bp = MnistBatchProvider(batch_size, False, seed)
+        bp = MnistBatchProvider(batch_size, False, seed, mess_with_data_k)
     else:
-        bp = FashionMnistBatchProvider(batch_size, False, seed)
+        bp = FashionMnistBatchProvider(batch_size, False, seed, mess_with_data_k)
 
     x, y = bp.batch()
 
@@ -185,11 +184,8 @@ def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, iters_to_w
                                  beta2=beta2,
                                  rho=rho,
                                  lr_update_formula_risky=lr_update_formula_risky,
-                                 step_size_anealing=step_size_anealing,
-                                 momentum=momentum,
-                                 disable_lr_change=disable_lr_change,
-                                 reduce_lr_only=reduce_lr_only,
-                                 update_every_two_snapshots=update_every_two_snapshots)
+                                   step_size_anealing=step_size_anealing,
+                                   momentum=momentum)
 
 
     with tf.Session() as sess:

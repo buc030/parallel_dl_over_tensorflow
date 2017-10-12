@@ -8,7 +8,7 @@ import tf_utils
 from tensorflow.contrib import learn
 from tensorflow.contrib.learn.python.learn.estimators import model_fn as model_fn_lib
 
-from lr_auto_adjust_sgd import SgdAdjustOptimizer
+from lr_auto_adjust_sgd_optimizer import SgdAdjustOptimizer
 from batch_provider import MnistBatchProvider, FashionMnistBatchProvider
 
 from tf_utils import avarge_on_feed_dicts, avarge_n_calls
@@ -81,9 +81,9 @@ from resnet_model_original import ResNet, HParams
 from sacred import Experiment
 from sacred.stflow import LogFileWriter
 
-ex = Experiment('minst_sgd_adjust')
+ex = Experiment('minst_sgd_adjust_optimizer_test')
 from sacred.observers import MongoObserver
-ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il', db_name='minst_sgd_adjust_db'))
+ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il', db_name='minst_sgd_adjust_optimizer_test_db'))
 
 
 @ex.config
@@ -95,7 +95,7 @@ def my_config():
     lr_update_formula_risky = True
 
     iters_to_wait_before_first_collect = 0
-    iters_per_adjust = 55000
+    iters_per_adjust = 275
     #iters_per_adjust = (55000/batch_size)/2
     #iters_per_adjust = 50
     #iters_per_adjust = 1
@@ -115,7 +115,7 @@ def my_config():
     weighted_batch = False
     tensorboard_dir = tf_utils.allocate_tensorboard_dir()
     fashion_mnist = True
-    model = 'wide-resnet'
+    model = 'cnn'
     weight_decay = 0.0002
     momentum = 0.9
     step_size_anealing = False
@@ -173,8 +173,8 @@ def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, iters_to_w
 
     set_dropout = [tf.assign(enable_dropout, False), tf.assign(enable_dropout, True)]
 
-    optimizer = SgdAdjustOptimizer(model.loss, bp, tf.trainable_variables(),
-                                 lr=lr,
+    optimizer = SgdAdjustOptimizer(tf.trainable_variables(),
+                                 learning_rate=lr,
                                  batch_size=batch_size,
                                  train_dataset_size=bp.train_size(),
                                  iters_per_adjust=iters_per_adjust,
@@ -189,9 +189,12 @@ def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, iters_to_w
                                  momentum=momentum,
                                  disable_lr_change=disable_lr_change,
                                  reduce_lr_only=reduce_lr_only,
-                                 update_every_two_snapshots=update_every_two_snapshots)
+                                 update_every_two_snapshots=update_every_two_snapshots,
+                                   use_locking=False,
+                                   name='sgd_adjust_optimizer')
 
 
+    minimize_op = optimizer.minimize(model.loss)
     with tf.Session() as sess:
 
         writer = tf.summary.FileWriter(tensorboard_dir)
@@ -203,6 +206,7 @@ def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, iters_to_w
         sess.run(tf.global_variables_initializer())
 
         bp.custom_runner.start_threads(sess, n_train_threads=2)
+        summary_idx = 0
 
         for epoch in range(n_epochs):
             print 'epoch = ' + str(epoch)
@@ -225,7 +229,12 @@ def my_main(lr, batch_size, n_epochs, iters_per_adjust, per_variable, iters_to_w
             sess.run(set_dropout[1])
 
             #optimize
+
             for i in range(bp.train_size()/batch_size):
-                optimizer.run_iter(sess)
+                sess.run(minimize_op)
+
+                writer.add_summary(sess.run(optimizer.sgd_summaries), summary_idx)
+                summary_idx += 1
+
             writer.flush()
             print '---------------'

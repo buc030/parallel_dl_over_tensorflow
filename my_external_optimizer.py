@@ -343,12 +343,12 @@ class ScipyOptimizerInterface(ExternalOptimizerInterface):
     #print ('minimize_args = ' + str(minimize_args))
     #print('minimize_kwargs = ' + str(minimize_kwargs))
     result = scipy.optimize.minimize(*minimize_args, **minimize_kwargs)
-    logging.info('Optimization terminated with:\n'
-                 '  Message: %s\n'
-                 '  Objective function value: %f\n'
-                 '  Number of iterations: %d\n'
-                 '  Number of functions evaluations: %d',
-                 result.message, result.fun, result.nit, result.nfev)
+    # logging.info('Optimization terminated with:\n'
+    #              '  Message: %s\n'
+    #              '  Objective function value: %f\n'
+    #              '  Number of iterations: %d\n'
+    #              '  Number of functions evaluations: %d',
+    #              result.message, result.fun, result.nit, result.nfev)
 
     return result['x']
 

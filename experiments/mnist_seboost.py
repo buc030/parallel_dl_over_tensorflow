@@ -9,13 +9,14 @@ from tensorflow.contrib import learn
 from tensorflow.contrib.learn.python.learn.estimators import model_fn as model_fn_lib
 
 from seboost_optimizer import SeboostOptimizer
-from batch_provider import MnistBatchProvider
+from batch_provider import MnistBatchProvider, FashionMnistBatchProvider
+from resnet_model_original import ResNet, HParams
 
 from tf_utils import avarge_on_feed_dicts, avarge_n_calls
 
 Model = collections.namedtuple('Model', ['loss', 'accuracy', 'predictions'])
 
-def cnn_model_fn(features, labels, enable_dropout, weight_decay):
+def cnn_model_fn(features, labels, enable_dropout):
   """Model function for CNN."""
   # Input Layer
   labels = tf.reshape(labels, [-1])
@@ -56,12 +57,12 @@ def cnn_model_fn(features, labels, enable_dropout, weight_decay):
   loss = tf.losses.softmax_cross_entropy(
     onehot_labels=onehot_labels, logits=logits)
 
-  costs = []
-  for var in tf.trainable_variables():
-      if not (var.op.name.find(r'bias') > 0):
-          costs.append(tf.nn.l2_loss(var))
-
-  loss += tf.multiply(weight_decay, tf.add_n(costs))
+  # costs = []
+  # for var in tf.trainable_variables():
+  #     if not (var.op.name.find(r'bias') > 0):
+  #         costs.append(tf.nn.l2_loss(var))
+  #
+  # loss += tf.multiply(weight_decay, tf.add_n(costs))
 
   correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(onehot_labels, 1))
   accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
@@ -76,7 +77,7 @@ from sacred.stflow import LogFileWriter
 
 ex = Experiment('minst_seboost')
 from sacred.observers import MongoObserver
-ex.observers.append(MongoObserver.create(db_name='minst_seboost_db'))
+ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il', db_name='minst_seboost_db'))
 
 @ex.config
 def my_config():
@@ -109,20 +110,58 @@ def my_config():
 
     history_decay_rate = 1.0
 
+    per_variable = False
+    anchor_size = 0
+    anchor_offsets = []
+    iters_per_sesop = 550 #once per epoch
+    use_grad_dir = False
+    normalize_history_dirs = False
+    normalize_subspace = False
+    break_sesop_batch = False
     seed = 913526365
+
+    fashion_mnist = False
+    model = 'cnn'
 
 @ex.automain
 @LogFileWriter(ex)
-def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size,
-            num_of_batches_per_sesop, sesop_private_dataset, n_epochs, disable_dropout_during_sesop,
+def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size, per_variable, anchor_size, anchor_offsets, iters_per_sesop,
+            use_grad_dir, normalize_history_dirs, normalize_subspace, break_sesop_batch, fashion_mnist, model,
+            num_of_batches_per_sesop, sesop_private_dataset, n_epochs, disable_dropout_during_sesop, seed,
             sesop_method, sesop_options, seboost_base_method, normalize_function_during_sesop, disable_dropout_at_all, disable_sesop_at_all, history_decay_rate,
             tensorboard_dir):
 
-    bp = MnistBatchProvider(batch_size, sesop_private_dataset)
+    if fashion_mnist == False:
+        bp = MnistBatchProvider(batch_size, sesop_private_dataset, seed)
+    else:
+        bp = FashionMnistBatchProvider(batch_size, sesop_private_dataset, seed)
+
     x, y = bp.batch()
 
     enable_dropout = tf.Variable(True, trainable=False)
-    model = cnn_model_fn(x, y, enable_dropout, weight_decay)
+    # model = cnn_model_fn(x, y, enable_dropout)
+    if model == 'cnn':
+        model = cnn_model_fn(x, y, enable_dropout)
+    elif model == 'wide-resnet':
+
+        hps = HParams(batch_size=batch_size,
+                      num_classes=10,
+                      min_lrn_rate=None,
+                      lrn_rate=None,
+                      num_residual_units=4,
+                      use_bottleneck=False,
+                      weight_decay_rate=weight_decay,
+                      relu_leakiness=0.1,
+                      state_of_the_art=False,
+                      optimizer=None,
+                      input_chanels=1)
+
+        # onehot_labels = tf.one_hot(indices=tf.cast(y, tf.int32), depth=10)
+        onehot_labels = tf.one_hot(indices=tf.cast(tf.reshape(y, [-1]), tf.int32), depth=10)
+
+        model = ResNet(hps, tf.reshape(x, [-1, 28, 28, 1]), onehot_labels, 'train')
+        model._build_model()
+        model = Model(loss=model.cost, accuracy=model.accuracy, predictions=None)
 
     train_accuracy_summary = tf.summary.scalar('train_accuracy', model.accuracy, ['mnist_summary'])
     test_accuracy_summary = tf.summary.scalar('test_accuracy', model.accuracy, ['mnist_summary'])
@@ -145,8 +184,18 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
                                  seboost_base_method=seboost_base_method,
                                  history_decay_rate=history_decay_rate,
                                  sesop_method=sesop_method,
+                                 disable_sesop_at_all=disable_sesop_at_all,
                                  predictions=model.predictions,
+                                 normalize_history_dirs=normalize_history_dirs,
+                                 break_sesop_batch=break_sesop_batch,
+                                 use_grad_dir=use_grad_dir,
+                                 normalize_subspace=normalize_subspace,
+                                 anchor_size=anchor_size,
+                                 iters_per_sesop=iters_per_sesop,
+                                 anchor_offsets=anchor_offsets,
                                  normalize_function_during_sesop=normalize_function_during_sesop,
+                                 weight_decay=weight_decay,
+                                 per_variable=per_variable,
                                  sesop_options=sesop_options)
 
 
@@ -190,17 +239,16 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
             if disable_dropout_at_all == True:
                 sess.run(set_dropout[0])
 
-            optimizer.run_epoch(sess)
+            for i in range(bp.train_size() / batch_size):
+                optimizer.run_iter_without_sesop(sess)
 
             if disable_dropout_during_sesop == True:
                 sess.run(set_dropout[0])
 
-            if disable_sesop_at_all == True:
-                optimizer.iter += 1
-            else:
-                optimizer.run_sesop(sess)
+            optimizer.run_sesop(sess)
 
-            if disable_dropout_during_sesop == True:
+            if disable_dropout_during_sesop == True and disable_dropout_at_all == False:
                 sess.run(set_dropout[1])
+
             writer.flush()
             print '---------------'

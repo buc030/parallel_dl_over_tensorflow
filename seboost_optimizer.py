@@ -184,7 +184,7 @@ class SeboostOptimizer:
                 self.update_lr_op_per_var(sess, _sgd_distance_moved, _distance_sesop_moved, _distance_seboost_moved, _sgd_sesop_dot_product)
             else:
                 print '_sgd_sesop angle = ' + str(_sgd_sesop_dot_product/(_distance_sesop_moved*_sgd_distance_moved))
-                factor = (1.0 + _sgd_sesop_dot_product / (_distance_sesop_moved*_sgd_distance_moved))
+                factor = (1.0 + _sgd_sesop_dot_product / (_sgd_distance_moved*_sgd_distance_moved))
                 # factor = factor**(1.0/(self.lr_change_idx + 1))
                 # factor = factor*(self.lr_change_idx + 2)/(self.lr_change_idx + 1)
                 # factor = factor ** (1.0 / (1 + (self.lr_change_idx) % 10) )
@@ -208,6 +208,8 @@ class SeboostOptimizer:
 
 
                 #factor = min(np.log(self.lr_change_idx + 2.719), factor)
+                factor = max([factor, 0.5])
+                factor = min([factor, 2.0])
 
                 print 'factor after clamping ' + str(factor)
                 # factor = min([factor, 1.1])
@@ -256,6 +258,13 @@ class SeboostOptimizer:
 
         self.bp.set_data_source(sess, 'train')
         self.bp.set_deque_batch_size(sess, self.batch_size)
+
+    def run_iter_without_sesop(self, sess):
+        s = sess.run(self.sgd_summaries)
+        self.writer.add_summary(s, self.sgd_summary_idx)
+        self.sgd_summary_idx += 1
+        sess.run(self.sgd_op)
+        self.iter += 1
 
     def run_iter(self, sess):
 

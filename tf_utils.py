@@ -12,10 +12,11 @@ import sys
 import shutil
 import functools
 import os
+import glob
 
 def allocate_tensorboard_dir():
     BASE_DIR = '/home/shai/tensorflow/generated_data'
-    used = [int(x) for x in shutil.os.listdir(BASE_DIR)]
+    used = [int(x) for x in shutil.os.listdir(BASE_DIR) if x.isdigit()]
     if len(used) == 0:
         return BASE_DIR + '/' + str(1)
 
@@ -25,6 +26,17 @@ def allocate_tensorboard_dir():
 
     return path
 
+def allocate_model_dir():
+    BASE_DIR = '/home/shai/tensorflow/generated_models'
+    used = [int(x) for x in shutil.os.listdir(BASE_DIR)]
+    if len(used) == 0:
+        return BASE_DIR + '/' + str(1)
+
+    path = BASE_DIR + '/' + str(max(used) + 1)
+    if not os.path.exists(path):
+        os.mkdir(path)
+
+    return path
 
 def lazy_property(function):
     attribute = '_cache_' + function.__name__
