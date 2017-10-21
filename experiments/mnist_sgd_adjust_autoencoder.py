@@ -43,7 +43,7 @@ from sacred.stflow import LogFileWriter
 
 ex = Experiment('minst_autoencoder_sgd_adjust')
 from sacred.observers import MongoObserver
-ex.observers.append(MongoObserver.create(db_name='minst_autoencoder_sgd_adjust_db'))
+ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il',db_name='minst_autoencoder_sgd_adjust_db'))
 
 
 @ex.config
@@ -78,6 +78,8 @@ def my_config():
     weight_decay = 0.0002
 
     step_size_anealing = False
+
+
 
 @ex.automain
 @LogFileWriter(ex)

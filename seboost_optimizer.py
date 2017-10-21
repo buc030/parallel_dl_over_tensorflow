@@ -5,6 +5,7 @@ import numpy as np
 from sesop_optimizer import SubspaceOptimizer
 
 from tf_utils import avarge_on_feed_dicts, avarge_n_calls
+from lr_auto_adjust_sgd_optimizer import SgdAdjustOptimizer
 
 # Usage:
 # ----------
@@ -85,6 +86,11 @@ class SeboostOptimizer:
         with tf.name_scope('seboost_optimizer'):
             if optimizer_kwargs['seboost_base_method'] == 'SGD':
                 self.sgd_optim = tf.train.GradientDescentOptimizer(self.lr)
+            elif optimizer_kwargs['seboost_base_method'] == 'SGD_adjust':
+                optimizer_kwargs['learning_rate'] = initial_lr
+                optimizer_kwargs['use_locking'], optimizer_kwargs['name'] = False, 'SgdAdjustOptimizer'
+
+                self.sgd_optim = SgdAdjustOptimizer(var_list, **optimizer_kwargs)
             elif optimizer_kwargs['seboost_base_method'] == 'Adam':
                 self.sgd_optim = tf.train.AdamOptimizer(self.lr, optimizer_kwargs['beta1'], optimizer_kwargs['beta2'])
             elif optimizer_kwargs['seboost_base_method'] == 'Adagrad':

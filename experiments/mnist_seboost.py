@@ -9,6 +9,8 @@ from tensorflow.contrib import learn
 from tensorflow.contrib.learn.python.learn.estimators import model_fn as model_fn_lib
 
 from seboost_optimizer import SeboostOptimizer
+
+
 from batch_provider import MnistBatchProvider, FashionMnistBatchProvider
 from resnet_model_original import ResNet, HParams
 
@@ -123,6 +125,7 @@ def my_config():
     fashion_mnist = False
     model = 'cnn'
 
+    #SgdAdjustOptimizer
 @ex.automain
 @LogFileWriter(ex)
 def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size, per_variable, anchor_size, anchor_offsets, iters_per_sesop,

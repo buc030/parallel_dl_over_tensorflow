@@ -9,56 +9,33 @@ from tensorflow.contrib import learn
 from tensorflow.contrib.learn.python.learn.estimators import model_fn as model_fn_lib
 
 from seboost_optimizer import SeboostOptimizer
-from batch_provider import MnistBatchProvider
+from batch_provider import MnistBatchProvider, FashionMnistBatchProvider
 
 from tf_utils import avarge_on_feed_dicts, avarge_n_calls
 
 Model = collections.namedtuple('Model', ['loss', 'predictions'])
 
+def autoencoder_model(features, layers_size, weight_decay):
+    # Input Layer
+    features = tf.reshape(features, [-1, 28*28])
 
-def autoencoder_model(features, labels, enable_preceptgene):
-  """Model function for CNN."""
-  # Input Layer
-  input_layer = features
+    layers = [features]
 
-  #input_layer = tf.log(input_layer)
+    for i, size in zip(range(len(layers_size)), layers_size):
+        layers.append(tf.layers.dense(inputs=layers[-1], units=size, activation=tf.nn.tanh, use_bias=True))
 
-  if enable_preceptgene == False:
-      #hidden1 = tf.layers.dense(inputs=input_layer, units=20, activation=tf.nn.softplus)
+    logits = layers[-1]
 
-      hidden1 = tf.nn.softplus(tf.layers.batch_normalization(tf.layers.dense(inputs=input_layer, units=20, activation=None)))
+    loss = tf.losses.mean_squared_error(features, logits)
 
-      n_hidden = 4
-      hiddens = [hidden1]
-      for i in range(n_hidden - 1):
-          hiddens.append(tf.nn.softplus(
-              tf.layers.dense(inputs=hiddens[-1], units=40, activation=None)))
+    costs = []
+    for var in tf.trainable_variables():
+        if not (var.op.name.find(r'bias') > 0):
+            costs.append(tf.nn.l2_loss(var))
 
-          #hiddens.append(tf.nn.softplus(tf.layers.batch_normalization(tf.layers.dense(inputs=hiddens[-1], units=40, activation=None))))
+    loss += tf.multiply(weight_decay, tf.add_n(costs))
 
-
-      output = tf.layers.dense(inputs=hiddens[-1], units=28*28, activation=None)
-
-
-      loss = tf.losses.mean_squared_error(input_layer, output)
-  else:
-
-      input_layer = tf.log(((input_layer + 1)/2)*2.719)
-      hidden1 = tf.layers.dense(inputs=input_layer, units=20, activation=None)
-
-      hidden1 = tf.maximum(hidden1, 1.0)
-      hidden1 = tf.log(hidden1)
-      hidden2 = tf.layers.dense(inputs=hidden1, units=40, activation=None)
-
-      hidden2 = tf.maximum(hidden2, 1.0)
-      hidden2 = tf.log(hidden2)
-      output = tf.layers.dense(inputs=hidden2, units=28 * 28, activation=None)
-
-      loss = tf.losses.mean_squared_error(input_layer, output)
-
-
-  return Model(loss=loss, predictions=output)
-
+    return Model(loss=loss, predictions=None)
 
 
 
@@ -67,13 +44,17 @@ from sacred.stflow import LogFileWriter
 
 ex = Experiment('minst_autoencoder_seboost')
 from sacred.observers import MongoObserver
-ex.observers.append(MongoObserver.create(db_name='minst_autoencoder_seboost_db'))
+ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il', db_name='minst_autoencoder_seboost_db'))
 
 @ex.config
 def my_config():
+
+    layers_size = [28 * 28, 40, 20, 40, 28 * 28]
+
+
     lr = 0.1
-    n_epochs = 100
-    batch_size = 100
+
+
     history_size = 10
     tensorboard_dir = tf_utils.allocate_tensorboard_dir()
 
@@ -81,20 +62,22 @@ def my_config():
     VECTOR_BREAKING = False
     adaptable_learning_rate = True
     num_of_batches_per_sesop = 10
-    sesop_private_dataset = True
+    sesop_private_dataset = False
     disable_dropout_during_sesop = True
     disable_dropout_at_all = True
     disable_sesop_at_all = False
-    normalize_history_dirs = True
-    normalize_subspace = True
-    per_variable = True
+    normalize_history_dirs = False
+    normalize_subspace = False
+    per_variable = False
+    use_grad_dir = False
 
     if disable_sesop_at_all:
         sesop_private_dataset = False
 
-    sesop_options = {'maxiter': 10, 'gtol': 1e-10}
+    sesop_method = 'CG'
+    sesop_options = {'maxiter': 200, 'gtol': 1e-06}
     #adaptable_learning_rate = False
-    seboost_base_method = 'Momentum'
+    seboost_base_method = 'SGD'
     #seboost_base_method = 'SGD'
 
     normalize_function_during_sesop = True
@@ -103,11 +86,12 @@ def my_config():
 
     history_decay_rate = 0.0
 
-    enable_preceptgene = False
     seed = 913526365
 
-    anchor_size = 2
-    anchor_offsets = [1, 15]
+    # anchor_size = 2
+    # anchor_offsets = [1, 15]
+    anchor_size = 0
+    anchor_offsets = []
 
 
     # for adam
@@ -117,19 +101,31 @@ def my_config():
     # for Adadelta
     rho = 0.95
 
+    batch_size = 100
+    fashion_mnist = True
+    iters_per_adjust = 1000
+    base_optimizer = 'SGD'
+    redo_tag = True
 
+    n_epochs = 50
 
 @ex.automain
 @LogFileWriter(ex)
 def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size, anchor_size, anchor_offsets, normalize_history_dirs, normalize_subspace, per_variable,
-            num_of_batches_per_sesop, sesop_private_dataset, n_epochs, disable_dropout_during_sesop, enable_preceptgene, beta1, beta2, rho,
+            num_of_batches_per_sesop, sesop_private_dataset, n_epochs, disable_dropout_during_sesop, beta1, beta2, rho, seed, use_grad_dir, layers_size, fashion_mnist,
             sesop_method, sesop_options, seboost_base_method, normalize_function_during_sesop, disable_dropout_at_all, disable_sesop_at_all, history_decay_rate,
+            iters_per_adjust, base_optimizer, redo_tag,
             tensorboard_dir):
 
-    bp = MnistBatchProvider(batch_size, sesop_private_dataset)
+    #initial_batch_size, sesop_private_dataset, seed, mess_with_data
+    if fashion_mnist == False:
+        bp = MnistBatchProvider(batch_size, sesop_private_dataset, seed)
+    else:
+        bp = FashionMnistBatchProvider(batch_size, sesop_private_dataset, seed)
+
     x, y = bp.batch()
 
-    model = autoencoder_model(x, y, enable_preceptgene)
+    model = autoencoder_model(x, layers_size, weight_decay)
 
     train_loss_summary = tf.summary.scalar('train_loss', model.loss, ['mnist_summary'])
     test_loss_summary = tf.summary.scalar('test_loss', model.loss, ['mnist_summary'])
@@ -160,10 +156,16 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
                                  anchor_offsets=anchor_offsets,
                                  predictions=model.predictions,
                                  normalize_function_during_sesop=normalize_function_during_sesop,
-                                 sesop_options=sesop_options)
+                                 sesop_options=sesop_options,
+                                 weight_decay=weight_decay,
+                                 use_grad_dir=use_grad_dir,
+                                 break_sesop_batch=False,
+                                 iters_per_adjust=iters_per_adjust,
+                                 base_optimizer=base_optimizer)
 
-
-    with tf.Session() as sess:
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    with tf.Session(config=config) as sess:
 
         #shutil.rmtree('/tmp/generated_data/1')
 
@@ -197,14 +199,13 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
             bp.set_deque_batch_size(sess, batch_size)
             #END LOGING
 
+            print 'Training ...'
+            # optimize
+            for i in range(bp.train_size() / batch_size):
+                optimizer.run_iter_without_sesop(sess)
 
-            #optimize
-            optimizer.run_epoch(sess)
+            optimizer.run_sesop(sess)
 
-            if disable_sesop_at_all == True:
-                optimizer.iter += 1
-            else:
-                optimizer.run_sesop(sess)
 
             writer.flush()
             print '---------------'

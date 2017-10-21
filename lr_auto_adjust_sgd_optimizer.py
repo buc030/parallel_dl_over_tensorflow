@@ -158,7 +158,8 @@ class SgdAdjustOptimizer(optimizer.Optimizer):
 
         ###### UPDATE LR #######
         with tf.name_scope('update_lr_cond'):
-            should_update = tf.logical_and(tf.equal(self.lr_slide_index, self.optimizer_kwargs['iters_per_adjust'] - 1), tf.less(2 * self.optimizer_kwargs['iters_per_adjust'], self.sgd_counter))
+            should_update = tf.logical_and(tf.equal(self.lr_slide_index, self.optimizer_kwargs['iters_per_adjust'] - 1),
+                                           tf.less(2 * self.optimizer_kwargs['iters_per_adjust'] - 1, self.sgd_counter))
 
             #SV DEBUG
             self.update_lr_cond = tf.cond(pred=should_update, true_fn=lambda: self.update_lr, false_fn=lambda: tf.no_op())
@@ -176,6 +177,11 @@ class SgdAdjustOptimizer(optimizer.Optimizer):
         tf.summary.scalar('v_norm', self.v_norm, [SgdAdjustOptimizer.SUMMARY_SGD_KEY])
         tf.summary.scalar('angle', tf.cond(self.u_norm*self.v_norm > 0, lambda: self.lr_update_multiplier, lambda: 0.0), [SgdAdjustOptimizer.SUMMARY_SGD_KEY])
 
+        tf.summary.scalar('should_update', tf.cast(should_update, tf.int32), [SgdAdjustOptimizer.SUMMARY_SGD_KEY])
+        tf.summary.scalar('lr_slide_index', self.lr_slide_index, [SgdAdjustOptimizer.SUMMARY_SGD_KEY])
+        tf.summary.scalar('target_lr', self.curr_lr, [SgdAdjustOptimizer.SUMMARY_SGD_KEY])
+
+
         #### DEBUG ######
         #tf.summary.scalar('a', a, [SgdAdjustOptimizer.SUMMARY_SGD_KEY])
 
@@ -188,13 +194,15 @@ class SgdAdjustOptimizer(optimizer.Optimizer):
 
     def _finish(self, update_ops, name_scope):
         res = [self.sgd_optim._finish(update_ops, name_scope)]
-        res.append(self.sgd_counter.assign_add(1))
+
         with tf.control_dependencies(res):
             #SV DEBUG
             res.append(self.update_lr_cond)
             with tf.control_dependencies(res):
                 res.append(self.set_lr)
                 res.append(self.update_snapshot_cond)
+                with tf.control_dependencies(res):
+                    res.append(self.sgd_counter.assign_add(1))
 
         return tf.group(*res)
 
