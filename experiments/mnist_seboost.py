@@ -18,6 +18,7 @@ from tf_utils import avarge_on_feed_dicts, avarge_n_calls
 
 Model = collections.namedtuple('Model', ['loss', 'accuracy', 'predictions'])
 
+
 def cnn_model_fn(features, labels, enable_dropout):
   """Model function for CNN."""
   # Input Layer
@@ -84,7 +85,6 @@ ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il', db_n
 @ex.config
 def my_config():
     lr = 0.1
-    n_epochs = 100
     batch_size = 100
     history_size = 10
     tensorboard_dir = tf_utils.allocate_tensorboard_dir()
@@ -122,15 +122,26 @@ def my_config():
     break_sesop_batch = False
     seed = 913526365
 
-    fashion_mnist = False
-    model = 'cnn'
+    fashion_mnist = True
+    model = 'wide-resnet'
+
+    use_bn = True
+    sgd_adjust_vs_sesop_tag = True
+    iters_per_adjust = 250
+    base_optimizer = 'SGD'
+    n_epochs = 50
+    update_rule = 'log'
+    divide_factor = 0.1
+    ignore_big_ones = False
+    log = 'temp_invalid_val'
+
 
     #SgdAdjustOptimizer
 @ex.automain
 @LogFileWriter(ex)
-def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size, per_variable, anchor_size, anchor_offsets, iters_per_sesop,
-            use_grad_dir, normalize_history_dirs, normalize_subspace, break_sesop_batch, fashion_mnist, model,
-            num_of_batches_per_sesop, sesop_private_dataset, n_epochs, disable_dropout_during_sesop, seed,
+def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size, per_variable, anchor_size, anchor_offsets, iters_per_sesop, log,
+            use_grad_dir, normalize_history_dirs, normalize_subspace, break_sesop_batch, fashion_mnist, model, use_bn, sgd_adjust_vs_sesop_tag, divide_factor,
+            num_of_batches_per_sesop, sesop_private_dataset, n_epochs, disable_dropout_during_sesop, seed, iters_per_adjust, base_optimizer, update_rule, ignore_big_ones,
             sesop_method, sesop_options, seboost_base_method, normalize_function_during_sesop, disable_dropout_at_all, disable_sesop_at_all, history_decay_rate,
             tensorboard_dir):
 
@@ -141,7 +152,7 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
 
     x, y = bp.batch()
 
-    enable_dropout = tf.Variable(True, trainable=False)
+    enable_dropout = tf.Variable(not disable_dropout_at_all, trainable=False)
     # model = cnn_model_fn(x, y, enable_dropout)
     if model == 'cnn':
         model = cnn_model_fn(x, y, enable_dropout)
@@ -157,7 +168,8 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
                       relu_leakiness=0.1,
                       state_of_the_art=False,
                       optimizer=None,
-                      input_chanels=1)
+                      input_chanels=1,
+                      use_bn=use_bn)
 
         # onehot_labels = tf.one_hot(indices=tf.cast(y, tf.int32), depth=10)
         onehot_labels = tf.one_hot(indices=tf.cast(tf.reshape(y, [-1]), tf.int32), depth=10)
@@ -199,7 +211,12 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
                                  normalize_function_during_sesop=normalize_function_during_sesop,
                                  weight_decay=weight_decay,
                                  per_variable=per_variable,
-                                 sesop_options=sesop_options)
+                                 sesop_options=sesop_options,
+                                 iters_per_adjust=iters_per_adjust,
+                                 base_optimizer=base_optimizer,
+                                 update_rule=update_rule,
+                                 divide_factor=divide_factor,
+                                 ignore_big_ones=ignore_big_ones)
 
 
     with tf.Session() as sess:
@@ -249,9 +266,6 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
                 sess.run(set_dropout[0])
 
             optimizer.run_sesop(sess)
-
-            if disable_dropout_during_sesop == True and disable_dropout_at_all == False:
-                sess.run(set_dropout[1])
 
             writer.flush()
             print '---------------'

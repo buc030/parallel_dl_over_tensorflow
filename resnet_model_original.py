@@ -32,7 +32,7 @@ from tensorflow.python.training import moving_averages
 HParams = namedtuple('HParams',
                      'batch_size, num_classes, min_lrn_rate, lrn_rate, '
                      'num_residual_units, use_bottleneck, weight_decay_rate, '
-                     'relu_leakiness, state_of_the_art, optimizer, input_chanels')
+                     'relu_leakiness, state_of_the_art, optimizer, input_chanels, use_bn')
 
 
 class ResNet(object):
@@ -97,6 +97,10 @@ class ResNet(object):
       # https://arxiv.org/pdf/1605.07146v1.pdf
       # filters = [16, 160, 320, 640]
       # Update hps.num_residual_units to 4
+
+      # Every res block has 2 convs. So if num_residual_units=n
+      # We have 2*3*n=6*n total convs
+      # For num_residual_units=4, this gives us 24 conv layers + 4 other layers
 
     with tf.variable_scope('unit_1_0'):
       x = res_func(x, filters[0], filters[1], self._stride_arr(strides[0]),
@@ -165,6 +169,9 @@ class ResNet(object):
   # TODO(xpan): Consider batch_norm in contrib/layers/python/layers/layers.py
   def _batch_norm(self, name, x):
     """Batch normalization."""
+    if self.hps.use_bn == False:
+      return x
+
     with tf.variable_scope(name):
       params_shape = [x.get_shape()[-1]]
 
@@ -290,10 +297,16 @@ class ResNet(object):
     """Convolution."""
     with tf.variable_scope(name):
       n = filter_size * filter_size * out_filters
-      kernel = tf.get_variable(
+      if self.hps.use_bn:
+        kernel = tf.get_variable(
+            'DW', [filter_size, filter_size, in_filters, out_filters],
+            tf.float32, initializer=tf.random_normal_initializer(
+                stddev=np.sqrt(2.0/n)))
+      else:
+        kernel = tf.get_variable(
           'DW', [filter_size, filter_size, in_filters, out_filters],
-          tf.float32, initializer=tf.random_normal_initializer(
-              stddev=np.sqrt(2.0/n)))
+          tf.float32, initializer=tf.contrib.layers.xavier_initializer())
+
       return tf.nn.conv2d(x, kernel, strides, padding='SAME')
 
   def _relu(self, x, leakiness=0.0):
@@ -303,11 +316,20 @@ class ResNet(object):
   def _fully_connected(self, x, out_dim):
     """FullyConnected layer for final output."""
     #x = tf.reshape(x, [self.hps.batch_size, -1])
-    w = tf.get_variable(
+
+    if self.hps.use_bn:
+      w = tf.get_variable(
+          'DW', [x.get_shape()[1], out_dim],
+          initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
+      b = tf.get_variable('biases', [out_dim],
+                          initializer=tf.constant_initializer())
+    else:
+      w = tf.get_variable(
         'DW', [x.get_shape()[1], out_dim],
-        initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
-    b = tf.get_variable('biases', [out_dim],
-                        initializer=tf.constant_initializer())
+        initializer=tf.contrib.layers.xavier_initializer())
+      b = tf.get_variable('biases', [out_dim],
+                          initializer=tf.constant_initializer())
+
     return tf.nn.xw_plus_b(x, w, b)
 
   def _global_avg_pool(self, x):

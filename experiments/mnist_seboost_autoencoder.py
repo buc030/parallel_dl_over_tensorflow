@@ -15,25 +15,28 @@ from tf_utils import avarge_on_feed_dicts, avarge_n_calls
 
 Model = collections.namedtuple('Model', ['loss', 'predictions'])
 
-def autoencoder_model(features, layers_size, weight_decay):
+def autoencoder_model(features, layers_size, weight_decay, bn_on):
     # Input Layer
     features = tf.reshape(features, [-1, 28*28])
 
     layers = [features]
 
     for i, size in zip(range(len(layers_size)), layers_size):
-        layers.append(tf.layers.dense(inputs=layers[-1], units=size, activation=tf.nn.tanh, use_bias=True))
-
+        #bn_on
+        layers.append(tf.layers.dense(inputs=layers[-1], units=size, activation=None, use_bias=True))
+        if bn_on:
+            layers.append(tf.layers.batch_normalization(layers[-1], axis=1))
+        layers.append(tf.nn.tanh(layers[-1]))
     logits = layers[-1]
 
     loss = tf.losses.mean_squared_error(features, logits)
 
-    costs = []
-    for var in tf.trainable_variables():
-        if not (var.op.name.find(r'bias') > 0):
-            costs.append(tf.nn.l2_loss(var))
-
-    loss += tf.multiply(weight_decay, tf.add_n(costs))
+    # costs = []
+    # for var in tf.trainable_variables():
+    #     if not (var.op.name.find(r'bias') > 0):
+    #         costs.append(tf.nn.l2_loss(var))
+    #
+    # loss += tf.multiply(weight_decay, tf.add_n(costs))
 
     return Model(loss=loss, predictions=None)
 
@@ -49,7 +52,7 @@ ex.observers.append(MongoObserver.create(url='gpu-plx01.ef.technion.ac.il', db_n
 @ex.config
 def my_config():
 
-    layers_size = [28 * 28, 40, 20, 40, 28 * 28]
+
 
 
     lr = 0.1
@@ -101,20 +104,24 @@ def my_config():
     # for Adadelta
     rho = 0.95
 
+
+    layers_size = [28 * 28, 2000, 64, 2000, 28 * 28]
+    bn_on = False
     batch_size = 100
     fashion_mnist = True
-    iters_per_adjust = 1000
+    iters_per_adjust = 250
     base_optimizer = 'SGD'
     redo_tag = True
 
     n_epochs = 50
+    update_rule = 'log'
 
 @ex.automain
 @LogFileWriter(ex)
 def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_rate, batch_size, anchor_size, anchor_offsets, normalize_history_dirs, normalize_subspace, per_variable,
             num_of_batches_per_sesop, sesop_private_dataset, n_epochs, disable_dropout_during_sesop, beta1, beta2, rho, seed, use_grad_dir, layers_size, fashion_mnist,
             sesop_method, sesop_options, seboost_base_method, normalize_function_during_sesop, disable_dropout_at_all, disable_sesop_at_all, history_decay_rate,
-            iters_per_adjust, base_optimizer, redo_tag,
+            iters_per_adjust, base_optimizer, redo_tag, bn_on, update_rule,
             tensorboard_dir):
 
     #initial_batch_size, sesop_private_dataset, seed, mess_with_data
@@ -125,7 +132,7 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
 
     x, y = bp.batch()
 
-    model = autoencoder_model(x, layers_size, weight_decay)
+    model = autoencoder_model(x, layers_size, weight_decay, bn_on)
 
     train_loss_summary = tf.summary.scalar('train_loss', model.loss, ['mnist_summary'])
     test_loss_summary = tf.summary.scalar('test_loss', model.loss, ['mnist_summary'])
@@ -161,8 +168,11 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
                                  use_grad_dir=use_grad_dir,
                                  break_sesop_batch=False,
                                  iters_per_adjust=iters_per_adjust,
-                                 base_optimizer=base_optimizer)
+                                 base_optimizer=base_optimizer,
+                                 update_rule=update_rule,
+                                 n_epochs=n_epochs)
 
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
@@ -202,7 +212,8 @@ def my_main(lr, weight_decay, VECTOR_BREAKING, history_size, adaptable_learning_
             print 'Training ...'
             # optimize
             for i in range(bp.train_size() / batch_size):
-                optimizer.run_iter_without_sesop(sess)
+                with tf.control_dependencies(update_ops):
+                    optimizer.run_iter_without_sesop(sess)
 
             optimizer.run_sesop(sess)
 

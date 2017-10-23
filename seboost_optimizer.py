@@ -117,11 +117,13 @@ class SeboostOptimizer:
                 new_loss += (tf.add_n(costs) * self.weight_decay)
 
             grads_and_vars = self.sgd_optim.compute_gradients(new_loss, var_list=var_list)
+            self.sgd_grads = [g for g, v in grads_and_vars]
+
             if optimizer_kwargs['per_variable']:
                 grads_and_vars = [(g*self.lr_mult_factor[v], v) for g,v in grads_and_vars]
             self.sgd_op = self.sgd_optim.apply_gradients(grads_and_vars)
 
-            self.sgd_grads = tf.gradients(loss, var_list)
+
 
             self.test_full_loss_summary = tf.summary.scalar('test_full_loss', loss, ['test_full_loss'])
             self.full_loss_summary = tf.summary.scalar('full_loss', loss, ['full_loss'])
