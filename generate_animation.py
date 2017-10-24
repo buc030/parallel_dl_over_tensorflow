@@ -7,6 +7,8 @@ import tensorflow as tf
 import matplotlib.animation as animation
 from mpl_toolkits.mplot3d import axes3d, Axes3D #<-- Note the capitalization!
 
+from lr_auto_adjust_sgd_optimizer import SgdAdjustOptimizer
+
 config = tf.ConfigProto(
         device_count={'GPU': 0}
 )
@@ -55,6 +57,9 @@ class TrajAnimator:
             minimize_op = tf.train.AdagradOptimizer(self.optimizer_kwargs['lr'])
         elif self.optimizer_kwargs['optimizer_name'] == 'Adadelta':
             minimize_op = tf.train.AdadeltaOptimizer(self.optimizer_kwargs['lr'], self.optimizer_kwargs['rho'])
+        elif self.optimizer_kwargs['optimizer_name'] == 'Adam-Adjust':
+            self.optimizer_kwargs['use_locking'], self.optimizer_kwargs['name'] = False, 'SgdAdjustOptimizer'
+            minimize_op = SgdAdjustOptimizer(tf.trainable_variables(), **self.optimizer_kwargs)
         else:
             assert (False)
 
@@ -136,14 +141,27 @@ class TrajAnimator:
             return plot,
 
         surf_ani = animation.FuncAnimation(fig, update_surface_and_traj, n, fargs=(Zs, surf),
-                                       interval=1000, blit=True)
+                                       interval=self.optimizer_kwargs['interval'], blit=True)
 
         surf_ani.save('/home/shai/animations/' + self.optimizer_kwargs['optimizer_name'] + '_anim.mp4')
 
 noise_power = 0.5
-n = 10
+n = 100
 
-TrajAnimator(optimizer_name='SGD', lr=0.1).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
-TrajAnimator(optimizer_name='Momentum', lr=0.01, momentum=0.9).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
-TrajAnimator(optimizer_name='Adam', lr=0.1, beta1=0.9, beta2=0.999).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
-TrajAnimator(optimizer_name='Nestrov', lr=0.01, momentum=0.9).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
+# TrajAnimator(optimizer_name='SGD', lr=0.1).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
+# TrajAnimator(optimizer_name='Momentum', lr=0.01, momentum=0.9).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
+# TrajAnimator(optimizer_name='Adam', lr=0.1, beta1=0.9, beta2=0.999).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
+# TrajAnimator(optimizer_name='Nestrov', lr=0.01, momentum=0.9).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
+
+TrajAnimator(optimizer_name='Adam', lr=0.001, beta1=0.9, beta2=0.999, interval=100).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
+# TrajAnimator(optimizer_name='Adam-Adjust',
+#              lr=0.001,
+#              learning_rate=0.001,
+#              iters_per_adjust=5,
+#              update_rule='linear',
+#              per_variable=False,
+#              ignore_big_ones=False,
+#              base_optimizer='Adam',
+#              beta1=0.9,
+#              beta2=0.999,
+#              interval=100).animate_sgd_trajectory(sess, noise_power=noise_power, batch_size=1, n=n)
